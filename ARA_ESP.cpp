@@ -160,7 +160,7 @@ void ARA_ESP::gps_local_position(float pos_x, float pos_y, int16_t pos_z) {
   double latitude = 0.0;   // Широта
   double longitude = 0.0;  // Долгота
   double altitude = 0.0;   // Высота над уровнем моря
-  Serial.printf("lat %f lon %f\n", ref_lat, ref_lon);
+
   converter.geodetic2Ecef(ref_lat, ref_lon, ref_alt, ref_x, ref_y, ref_z);
   float k_cos = cos(local_angle);
   float k_sin = sin(local_angle);
@@ -168,10 +168,9 @@ void ARA_ESP::gps_local_position(float pos_x, float pos_y, int16_t pos_z) {
   ref_x += pos_x * k_cos - pos_y * k_sin;
   ref_y += pos_y * k_cos + pos_x * k_sin;
   ref_z += pos_z;
-  Serial.printf("ref_x %f ref_y %f\n", ref_x, ref_y);
-  Serial.printf("pos_x %f pos_y %f\n", pos_x, pos_y);
+
   converter.ecef2Geodetic(ref_x, ref_y, ref_z, latitude, longitude, altitude);
-  Serial.printf("lat %f lon %f\n", latitude, longitude);
+
   local_pos_lat = (double) latitude *10000000;
   local_pos_lon = (double) longitude*10000000;
   local_pos_alt = (uint16_t) GPS_altitude + pos_z;
