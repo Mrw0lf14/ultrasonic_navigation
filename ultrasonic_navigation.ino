@@ -172,7 +172,7 @@ void loop() {
   }
 
 #ifdef INAV_GPS
-  esp.gps_local_position(position.x, position.y, position.z);
+  esp.gps_local_position(position.x/1000, position.y/1000, position.z/1000); // from mm to meter
   delay(50);
 #endif
 }
