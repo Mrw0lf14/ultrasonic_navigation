@@ -62,40 +62,49 @@ void ARA_ESP::begin(Stream& serial) {
 }
 
 
-void ARA_ESP::main_f() {
-  uint16_t channel[] = { ROLL, PITCH, THROTTLE, YAW, AUX1, AUX2, AUX3, AUX4 };
+// void ARA_ESP::main_f() {
+//   uint16_t channel[] = { ROLL, PITCH, THROTTLE, YAW, AUX1, AUX2, AUX3, AUX4 };
 
-  if (led_count++ > 0x11) {
-    msp.command(142, led_white, 11, false);
-  } else {
-    msp.command(142, led_black, 11, false);
-  }
+//   if (led_count++ > 0x11) {
+//     msp.command(142, led_white, 11, false);
+//   } else {
+//     msp.command(142, led_black, 11, false);
+//   }
 
-  if (led_count == 0x22) led_count = 0;
+//   if (led_count == 0x22) led_count = 0;
 
+//   msp_set_raw_rc_t set_raw;
+//   msp.command(MSP_SET_RAW_RC, channel, sizeof(channel), false);
+  
+//   uint8_t req[1];
+//   msp.request(MSP_GET_ESP_SLEEP, req, 1, NULL);
+
+//   if (req[0] == SLEEP_STATE_SLEEP_SUMMON) {
+//     //Serial.println("sleep");
+//     req[0] = SLEEP_STATE_IN_SLEEP;
+//     bool status = msp.command(MSP_SET_ESP_SLEEP, req, sizeof(req));
+//     uart_set_wakeup_threshold(UART_NUM_0, 20);
+//     esp_sleep_enable_uart_wakeup(UART_NUM_0);
+
+//     delay(100);
+//     digitalWrite(32, HIGH);
+//     esp_light_sleep_start();
+//     digitalWrite(32, LOW);
+
+//     delay(100);
+
+//     req[0] = SLEEP_STATE_NO_SLEEP_NEEDED;
+//     msp.command(MSP_SET_ESP_SLEEP, req, sizeof(req));
+//   }
+// }
+
+void ARA_ESP::main_f()
+{
+  uint16_t channel[] = {ROLL, PITCH, THROTTLE, YAW};
+  
   msp_set_raw_rc_t set_raw;
   msp.command(MSP_SET_RAW_RC, channel, sizeof(channel), false);
-  
-  uint8_t req[1];
-  msp.request(MSP_GET_ESP_SLEEP, req, 1, NULL);
 
-  if (req[0] == SLEEP_STATE_SLEEP_SUMMON) {
-    //Serial.println("sleep");
-    req[0] = SLEEP_STATE_IN_SLEEP;
-    bool status = msp.command(MSP_SET_ESP_SLEEP, req, sizeof(req));
-    uart_set_wakeup_threshold(UART_NUM_0, 20);
-    esp_sleep_enable_uart_wakeup(UART_NUM_0);
-
-    delay(100);
-    digitalWrite(32, HIGH);
-    esp_light_sleep_start();
-    digitalWrite(32, LOW);
-
-    delay(100);
-
-    req[0] = SLEEP_STATE_NO_SLEEP_NEEDED;
-    msp.command(MSP_SET_ESP_SLEEP, req, sizeof(req));
-  }
 }
 
 void ARA_ESP::gps_f() {
@@ -178,16 +187,24 @@ void ARA_ESP::gps_local_position(float pos_x, float pos_y, int16_t pos_z) {
   gps_f();
 }
 
-uint16_t ARA_ESP::get_channel(int channel) {
-  uint8_t rb[32] = { 0 };
+uint16_t ARA_ESP::get_channel(int channel)
+{  
+  uint8_t rb[32] = {0};
   uint16_t data[16];
-
+  
   msp.request(MSP_RC, rb, 32, NULL);
 
   for (int i = 0; i < 16; i++) {
     data[i] = (uint16_t)rb[i * 2] | ((uint16_t)rb[i * 2 + 1] << 8);
   }
-  return data[channel - 1];
+
+// for (uint8_t i = 1; i < 32; i+=2)
+//   {
+//     Serial.printf("%d | ", ((uint16_t)rb[i] << 8) | ((uint16_t)rb[i-1]));
+//   }
+//   Serial.println();
+
+  return data[channel-1];
 }
 
 void ARA_ESP::roll(float roll) {

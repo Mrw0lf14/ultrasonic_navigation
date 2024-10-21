@@ -4,6 +4,9 @@
 #include "ARA_ESP.h"
 #include <math.h>
 
+int mag_1 = 32;//Вывод, к которому подключен магнит
+int channel = 6;//канал для считывания
+
 struct Vector4 {
   float x;
   float y;
@@ -107,6 +110,8 @@ void setup() {
   esp.gps_local_position(0,0,0);
   esp.gps_set_lpos_orientation(200);
 
+  pinMode(mag_1, OUTPUT);// Управления выводом, к которому подключен магнит
+
   DXL_SERIAL.begin(115200, SERIAL_8N1, 3, 1);
   DXL_SERIAL.println("start");
 
@@ -173,7 +178,25 @@ void loop() {
 
 #ifdef INAV_GPS
   esp.gps_local_position(position.x/1000, position.y/1000, position.z/1000); // from mm to meter
-  delay(50);
+  delay(100);
 #endif
+
+  
+  uint16_t aux = esp.get_channel(channel);// значение с канала приемника, указанного в переменной channel
+  Serial.println(aux);
+  delay(200);
+  if (esp.flag_data)//Проверка на новые данные
+  {
+    esp.main_f();
+    esp.flag_data = false;
+  }
+  if(aux > 0 && aux < 1500){//проверка пришедшее значение 
+    digitalWrite(mag_1, LOW);
+    Serial.println("отпуск");
+  }
+  if(aux >= 1500){
+    digitalWrite(mag_1, HIGH);
+    Serial.println("захват");
+  }
 }
 
