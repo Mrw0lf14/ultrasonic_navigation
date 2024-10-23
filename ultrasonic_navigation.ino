@@ -22,15 +22,16 @@ struct Vector3 {
 
 #define MAX_X 2500
 #define MAX_Y 3000
-#define MAX_Z 2500
+#define MAX_Z 2400
 #define ka 1
 #define kb 0
 
 #define INAV_SERIAL Serial2
 #define DXL_SERIAL Serial
 
-#define WIFI_DEBUG
-#define INAV_GPS
+#define WALL            //если объявлено, считаем что излучатели расположены на стенах, иначе в углах
+#define WIFI_DEBUG      //отправка данных на асинхронный сервер
+#define INAV_GPS        //отправка координат на полетный контроллер
 
 #ifdef WIFI_DEBUG
 const char *ssid = "ESP_US_TOF";
@@ -132,13 +133,39 @@ void setup() {
   log_i("Server started");
 #endif
 
-  p[0] = {0    , 0    , MAX_Z, 3000};
+#ifdef WALL
+  p[0] = {1500, 0, MAX_Z, 3000};    // Положение передатчиков по стенам
+  p[1] = {0, 1500, MAX_Z, 3000};
+  p[2] = {1500, 3000, MAX_Z, 3000};
+  p[3] = {2500, 1500, MAX_Z, 3000};
+#else
+  p[0] = {0    , 0    , MAX_Z, 3000}; // Положение передатчиков по углам
   p[1] = {MAX_X, 0    , MAX_Z, 3000};
   p[2] = {0    , MAX_Y, MAX_Z, 3000};
   p[3] = {MAX_X, MAX_Y, MAX_Z, 3000};
+#endif
+
 }
 
+uint64_t timer = 0;
 void loop() {
+  uint64_t diff_timer = millis() - timer;
+
+  if (diff_timer > 300)
+  {
+    uint16_t aux = esp.get_channel(channel);// значение с канала приемника, указанного в переменной channel
+    Serial.println(aux);
+    if(aux > 0 && aux < 1500){//проверка пришедшее значение 
+      digitalWrite(mag_1, LOW);
+      Serial.println("отпуск");
+    }
+    if(aux >= 1500){
+      digitalWrite(mag_1, HIGH);
+      Serial.println("захват");
+    }
+    timer = millis();
+  }
+
 
   if (DXL_SERIAL.available())
   {
@@ -156,47 +183,50 @@ void loop() {
       r[2] = intersectionLength(p[2], p[3], 0);
       r[3] = intersectionLength(p[1], p[3], 0);
 
+      Vector4 lr[6];
+      lr[0] = intersectionLength(r[0], r[1], 1);
+      lr[1] = intersectionLength(r[1], r[2], 1);
+      lr[2] = intersectionLength(r[2], r[3], 1);
+      lr[3] = intersectionLength(r[3], r[0], 1); 
+      lr[4] = intersectionLength(r[0], r[2], 1);
+      lr[5] = intersectionLength(r[1], r[3], 1);
+    #ifdef WALL
+      Vector3 pos = {0,0,0};
+      uint8_t count = 0;;
+      for (int i = 0; i < 6; i++)
+      {
+        if (lr[i].z < 2000)
+        {
+          pos.x += lr[i].x;
+          pos.y += lr[i].y;
+          pos.z += lr[i].z;
+          count++;
+        }
+      }
+      position.x = pos.x / count;
+      position.y = pos.y / count;
+      position.z = pos.z / count;
+    #else
       position.x = (r[0].x + r[2].x)/2;
       position.y = (r[1].y + r[3].y)/2;
       Vector4 rcr[2];
       rcr[0] = intersectionLength(r[0], r[2], 1);
       rcr[1] = intersectionLength(r[1], r[3], 1);
       position.z = (rcr[0].z + rcr[1].z)/2;
-      
+    #endif
       position.x = constrain(position.x, 0, MAX_X);
       position.y = constrain(position.y, 0, MAX_Y);
       position.z = constrain(position.z, 0, MAX_Z);
-
-
+    #ifdef INAV_GPS
+      esp.gps_local_position(position.x/1000, position.y/1000, position.z/1000); // from mm to meter
+    #endif
     #ifdef WIFI_DEBUG
       memset(send_coords, 0, 100);
+      if (!isnan(position.x))
       sprintf(send_coords, "%f %f %f %d %d %d", position.x, position.y, position.z, num1, num2, num3);
-      Serial.println(send_coords);
+      // Serial.println(send_coords);
     #endif
     }
-  }
-
-#ifdef INAV_GPS
-  esp.gps_local_position(position.x/1000, position.y/1000, position.z/1000); // from mm to meter
-  delay(100);
-#endif
-
-  
-  uint16_t aux = esp.get_channel(channel);// значение с канала приемника, указанного в переменной channel
-  Serial.println(aux);
-  delay(200);
-  if (esp.flag_data)//Проверка на новые данные
-  {
-    esp.main_f();
-    esp.flag_data = false;
-  }
-  if(aux > 0 && aux < 1500){//проверка пришедшее значение 
-    digitalWrite(mag_1, LOW);
-    Serial.println("отпуск");
-  }
-  if(aux >= 1500){
-    digitalWrite(mag_1, HIGH);
-    Serial.println("захват");
   }
 }
 
