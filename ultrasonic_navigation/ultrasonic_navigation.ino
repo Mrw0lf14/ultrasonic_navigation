@@ -3,6 +3,52 @@
 #include <ESPAsyncWebServer.h>
 #include "ARA_ESP.h"
 #include <math.h>
+#include "DxlMaster2.h"
+
+//Регистры трехцветного светодиода
+#define GREEN_LED_DATA (26)
+#define RED_LED_DATA (27)
+#define BLUE_LED_DATA (28)
+
+//Регистры датчика освещенности
+#define LIGHT_DATA (26)
+
+// Регистры звукового пьезоизлучателя
+#define MOS_FREQ (26)
+#define MOS_POR (28)
+
+// ID трехцветного светодиода
+const uint8_t id_rgb = 21;
+
+// ID датчика освещенности
+const uint8_t id_light = 25;
+
+// ID звукового пьезоизлучателя
+const uint8_t id_buzzer = 24;
+
+
+///Объявляем Dynamixel устройство 
+DynamixelDevice device_rgb(id_rgb);
+DynamixelDevice device_light(id_light);
+DynamixelDevice device_buzzer(id_buzzer);
+
+//Выставляем скорость обмена данными с Dynamixel устройствами
+const unsigned long dynamixel_baudrate = 57600;
+//Выставляем скорость сериал порта
+const unsigned long serial_baudrate = 115200;
+
+//Параметры для трехцветного светодиода
+uint8_t red_led = 255;
+uint8_t green_led = 0;
+uint8_t blue_led = 204;
+
+//Параметры для датчика освещенности
+uint16_t brightness = 0;
+
+//Параметры для звукового пьезоизлучателя
+uint16_t frequency = 500;
+uint8_t filling_factor = 127;
+
 
 int mag_1 = 32;//Вывод, к которому подключен магнит
 int channel = 6;//канал для считывания
@@ -112,7 +158,16 @@ void setup() {
   esp.gps_set_lpos_orientation(200);
 
   pinMode(mag_1, OUTPUT);// Управления выводом, к которому подключен магнит
-
+  DxlMaster.begin(dynamixel_baudrate);
+  device_rgb.init();
+  device_buzzer.init();
+  device_light.init();
+  device_buzzer.write(MOS_POR, 0);
+  device_rgb.write(GREEN_LED_DATA, 0);
+  device_rgb.write(RED_LED_DATA, 0);
+  device_rgb.write(BLUE_LED_DATA, 0);
+  delay(1000);
+  // Serial.begin(serial_baudrate);
   DXL_SERIAL.begin(115200, SERIAL_8N1, 3, 1);
   DXL_SERIAL.println("start");
 
@@ -151,10 +206,11 @@ uint64_t timer = 0;
 void loop() {
   uint64_t diff_timer = millis() - timer;
 
-  if (diff_timer > 300)
+  if (diff_timer > 500)
   {
     uint16_t aux = esp.get_channel(channel);// значение с канала приемника, указанного в переменной channel
-    Serial.println(aux);
+    Serial.println();
+    Serial.println("aux = " + String(aux));
     if(aux > 0 && aux < 1500){//проверка пришедшее значение 
       digitalWrite(mag_1, LOW);
       Serial.println("отпуск");
@@ -164,69 +220,107 @@ void loop() {
       Serial.println("захват");
     }
     timer = millis();
+
+      device_light.read(LIGHT_DATA, brightness);
+      Serial.println();
+      Serial.println("brightness = " + String(brightness));
+    if(brightness < 200){//если освещенность меньше 200, то начинает мигать светодиод и звуковой пьезоизлучатель издает звук
+
+      // device_buzzer.write(MOS_POR, filling_factor);
+    
+      device_rgb.write(GREEN_LED_DATA, green_led);
+      device_rgb.write(RED_LED_DATA, red_led);
+      device_rgb.write(BLUE_LED_DATA, blue_led);
+      delay(100);
+
+      // device_buzzer.write(MOS_FREQ, frequency);
+
+      device_rgb.write(GREEN_LED_DATA, 0);
+      device_rgb.write(RED_LED_DATA, 0);
+      device_rgb.write(BLUE_LED_DATA, 0);
+      delay(100);
+    }
+    else{//если больше, то всё отключаем
+      device_buzzer.write(MOS_POR, 0);
+      device_rgb.write(GREEN_LED_DATA, 0);
+      device_rgb.write(RED_LED_DATA, 0);
+      device_rgb.write(BLUE_LED_DATA, 0);
+
+    }
+
+    // DXL_SERIAL.begin(115200, SERIAL_8N1, 3, 1);
   }
 
 
   if (DXL_SERIAL.available())
   {
-    String packet = DXL_SERIAL.readStringUntil('\n');
-    int num1, num2, num3;
-    sscanf(packet.c_str(), "%d %d %d", &num1, &num2, &num3);
-    // Serial.println(packet);
-    if (num1 < 4)
-    {     
-      p[num1].r = num2*ka + kb;
+    char head[4];
+    head[0] = DXL_SERIAL.read();
+    head[1] = DXL_SERIAL.read();
+    head[2] = DXL_SERIAL.read();
+    head[3] = DXL_SERIAL.read();
+    if (strncmp(head, "DATA", 4) == 0)
+    {
+      String packet = DXL_SERIAL.readStringUntil('\n');
+      int num1, num2, num3;
+      sscanf(packet.c_str(), " %d %d %d", &num1, &num2, &num3);
+      Serial.println("packet = " + packet);
+      if (num1 < 4)
+      {     
+        p[num1].r = num2*ka + kb;
 
-      Vector4 r[4];
-      r[0] = intersectionLength(p[0], p[1], 0);
-      r[1] = intersectionLength(p[0], p[2], 0);
-      r[2] = intersectionLength(p[2], p[3], 0);
-      r[3] = intersectionLength(p[1], p[3], 0);
+        Vector4 r[4];
+        r[0] = intersectionLength(p[0], p[1], 0);
+        r[1] = intersectionLength(p[0], p[2], 0);
+        r[2] = intersectionLength(p[2], p[3], 0);
+        r[3] = intersectionLength(p[1], p[3], 0);
 
-      Vector4 lr[6];
-      lr[0] = intersectionLength(r[0], r[1], 1);
-      lr[1] = intersectionLength(r[1], r[2], 1);
-      lr[2] = intersectionLength(r[2], r[3], 1);
-      lr[3] = intersectionLength(r[3], r[0], 1); 
-      lr[4] = intersectionLength(r[0], r[2], 1);
-      lr[5] = intersectionLength(r[1], r[3], 1);
-    #ifdef WALL
-      Vector3 pos = {0,0,0};
-      uint8_t count = 0;;
-      for (int i = 0; i < 6; i++)
-      {
-        if (lr[i].z < 2000)
+        Vector4 lr[6];
+        lr[0] = intersectionLength(r[0], r[1], 1);
+        lr[1] = intersectionLength(r[1], r[2], 1);
+        lr[2] = intersectionLength(r[2], r[3], 1);
+        lr[3] = intersectionLength(r[3], r[0], 1); 
+        lr[4] = intersectionLength(r[0], r[2], 1);
+        lr[5] = intersectionLength(r[1], r[3], 1);
+      #ifdef WALL
+        Vector3 pos = {0,0,0};
+        uint8_t count = 0;;
+        for (int i = 0; i < 6; i++)
         {
-          pos.x += lr[i].x;
-          pos.y += lr[i].y;
-          pos.z += lr[i].z;
-          count++;
+          if (lr[i].z < 2000)
+          {
+            pos.x += lr[i].x;
+            pos.y += lr[i].y;
+            pos.z += lr[i].z;
+            count++;
+          }
         }
+        position.x = pos.x / count;
+        position.y = pos.y / count;
+        position.z = pos.z / count;
+      #else
+        position.x = (r[0].x + r[2].x)/2;
+        position.y = (r[1].y + r[3].y)/2;
+        Vector4 rcr[2];
+        rcr[0] = intersectionLength(r[0], r[2], 1);
+        rcr[1] = intersectionLength(r[1], r[3], 1);
+        position.z = (rcr[0].z + rcr[1].z)/2;
+      #endif
+        position.x = constrain(position.x, 0, MAX_X);
+        position.y = constrain(position.y, 0, MAX_Y);
+        position.z = constrain(position.z, 0, MAX_Z);
+      #ifdef INAV_GPS
+        esp.gps_local_position(position.x/1000, position.y/1000, position.z/1000); // from mm to meter
+      #endif
+      #ifdef WIFI_DEBUG
+        memset(send_coords, 0, 100);
+        if (!isnan(position.x))
+        sprintf(send_coords, "%f %f %f %d %d %d", position.x, position.y, position.z, num1, num2, num3);
+        // Serial.println(send_coords);
+      #endif
       }
-      position.x = pos.x / count;
-      position.y = pos.y / count;
-      position.z = pos.z / count;
-    #else
-      position.x = (r[0].x + r[2].x)/2;
-      position.y = (r[1].y + r[3].y)/2;
-      Vector4 rcr[2];
-      rcr[0] = intersectionLength(r[0], r[2], 1);
-      rcr[1] = intersectionLength(r[1], r[3], 1);
-      position.z = (rcr[0].z + rcr[1].z)/2;
-    #endif
-      position.x = constrain(position.x, 0, MAX_X);
-      position.y = constrain(position.y, 0, MAX_Y);
-      position.z = constrain(position.z, 0, MAX_Z);
-    #ifdef INAV_GPS
-      esp.gps_local_position(position.x/1000, position.y/1000, position.z/1000); // from mm to meter
-    #endif
-    #ifdef WIFI_DEBUG
-      memset(send_coords, 0, 100);
-      if (!isnan(position.x))
-      sprintf(send_coords, "%f %f %f %d %d %d", position.x, position.y, position.z, num1, num2, num3);
-      // Serial.println(send_coords);
-    #endif
     }
-  }
+    }
+    
 }
 
