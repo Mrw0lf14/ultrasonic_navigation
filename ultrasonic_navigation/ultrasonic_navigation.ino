@@ -29,7 +29,7 @@ uint8_t filling_factor = 127;
 
 
 int mag_1 = 32;//Вывод, к которому подключен магнит
-int channel = 6;//канал для считывания
+int channel = 7;//канал для считывания
 
 struct Vector4 {
   float x;
