@@ -2,7 +2,6 @@
 #include <math.h>
 #include <ESPAsyncWebServer.h>
 #include "ARA_ESP.h"
-#include <math.h>
 #include "DxlMaster2.h"
 
 ///Объявляем Dynamixel устройство 

@@ -7,4 +7,8 @@ ultrasonic_navigation - скрипт для платы ESP HAT, включающ
 
 ultrasonic_navigation_only - скрипт для платы ESP HAT, который реализует только навигацию и сервер
 
+Необходимо поместить библиотеки из папки Libraries в папку "путь к папке Ардуино"\Arduino\libraries
+или добавить их в Arduiono ide (для этого необходимо Sketch -> Include Library -> Add .ZIP Library... и выбрать поочередно каждый архив из папки Libraries_zip)
+
 test.py - скрипт, визуализирующий координаты, данные получает с помощью сервера, перед запуском необходимо подключиться к точке ESP_US_TOF (пароль 12345678)
+pip install opencv-python numpy aiohttp - для установки сторонних библиотек

@@ -1,6 +1,5 @@
 import cv2
 import numpy as np
-import socket
 from collections import deque
 import asyncio
 import aiohttp
