@@ -5,28 +5,6 @@
 #include <math.h>
 #include "DxlMaster2.h"
 
-//Регистры трехцветного светодиода
-#define GREEN_LED_DATA (26)
-#define RED_LED_DATA (27)
-#define BLUE_LED_DATA (28)
-
-//Регистры датчика освещенности
-#define LIGHT_DATA (26)
-
-// Регистры звукового пьезоизлучателя
-#define MOS_FREQ (26)
-#define MOS_POR (28)
-
-// ID трехцветного светодиода
-const uint8_t id_rgb = 21;
-
-// ID датчика освещенности
-const uint8_t id_light = 25;
-
-// ID звукового пьезоизлучателя
-const uint8_t id_buzzer = 24;
-
-
 ///Объявляем Dynamixel устройство 
 DynamixelDevice device_rgb(id_rgb);
 DynamixelDevice device_light(id_light);
