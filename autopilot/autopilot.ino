@@ -6,7 +6,7 @@
 #include "DxlMaster2.h"
 
 
-#define EMULATE
+// #define EMULATE
 
 
 const char* ssid = "ESP_AUTOPILOT";
@@ -155,6 +155,7 @@ void handleGetWaypoints(AsyncWebServerRequest *request) {
         obj["id"] = wp.id;
         obj["x"] = wp.x;
         obj["y"] = wp.y;
+        obj["checked"] = wp.checked;  // Добавляем статус
     }
 
     String response;
@@ -322,7 +323,7 @@ const char index_html[] PROGMEM = R"rawliteral(
         }
 
 
-        setInterval(updateDronePosition, 100); // Каждые 1 секунду обновляем
+        setInterval(updateDronePosition, 100);
         async function updateChannels() {
             const response = await fetch('/get_channels');
             const channels = await response.json();
@@ -335,6 +336,7 @@ const char index_html[] PROGMEM = R"rawliteral(
             }
         }
         setInterval(updateChannels, 100); // Обновление каждые 250 мс
+        setInterval(fetchWaypoints, 200);
         async function addWaypoint(x, y) {
             const response = await fetch(`/add?x=${x}&y=${y}`, { method: 'POST' });
             const result = await response.json();
@@ -377,12 +379,6 @@ const char index_html[] PROGMEM = R"rawliteral(
                 // Отображение в списке
                 const div = document.createElement('div');
                 div.className = 'waypoint';
-                // Отображение дрона
-                const droneElem = document.createElement('div');
-                droneElem.className = 'drone';
-                droneElem.style.left = `${(drone.x / mapWidth) * 100}%`;
-                droneElem.style.top = `${(drone.y / mapHeight) * 100}%`;
-                map.appendChild(droneElem);
 
                 const inputX = document.createElement('input');
                 inputX.type = 'number';
@@ -413,6 +409,12 @@ const char index_html[] PROGMEM = R"rawliteral(
                 point.className = 'map-point';
                 point.style.left = `${(wp.x / mapWidth) * 100}%`;
                 point.style.top = `${(wp.y / mapHeight) * 100}%`;
+
+                // Закрашиваем точку в зеленый, если достигнута
+                if (wp.checked === 1) {
+                    point.style.background = 'green';
+                }
+
                 map.appendChild(point);
             });
         }
@@ -545,7 +547,6 @@ void check_way_point(Vector3 drone_pos, Waypoint* wp)
     counter_wp_checked++;
     esp.pitch(0);
     esp.roll(0);
-    esp.throttle(0.3);
     delay(1000);
   } 
 }
@@ -592,7 +593,7 @@ void loop() {
     //   msp_failed_counter = 0;
     //   esp.begin(Serial2);
     // }
-    // Serial.printf("ch6 = %d, ch8 = %d\n", aux1, aux2);
+    Serial.printf("ch6 = %d, ch8 = %d\n", aux1, aux2);
     alt_hold_on = aux1 >=  1500 ? 1 : 0;
     msp_overwrite = aux2 > 1500 ? 1 : 0;
     
@@ -614,7 +615,9 @@ void loop() {
       if (counter_wp_checked >= waypointCounter)
       {
         esp.throttle(0.2);
-        delay(500);
+        esp.roll(0);
+        esp.pitch(0);
+        delay(1000);
         esp.throttle(0);
         for(;;){}
       }
