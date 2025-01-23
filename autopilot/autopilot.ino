@@ -5,6 +5,10 @@
 #include "ARA_ESP.h"
 #include "DxlMaster2.h"
 
+
+#define EMULATE
+
+
 const char* ssid = "ESP_AUTOPILOT";
 const char* password = "12345678";
 
@@ -212,6 +216,7 @@ void handleGetChannels(AsyncWebServerRequest *request) {
     serializeJson(doc, response);
     request->send(200, "application/json", response);
 }
+
 
 
 // HTML-страница
@@ -534,14 +539,14 @@ void check_way_point(Vector3 drone_pos, Waypoint* wp)
 {
   uint16_t len_x = abs(drone_pos.x - wp->x);
   uint16_t len_y = abs(drone_pos.y - wp->y);
-  if (len_x < 200 && len_y < 200)
+  if (len_x < 100 && len_y < 100)
   {
     wp->checked = 1;
     counter_wp_checked++;
     esp.pitch(0);
     esp.roll(0);
     esp.throttle(0.3);
-    delay(3000);
+    delay(1000);
   } 
 }
 
@@ -553,6 +558,10 @@ void update_position(Point current_position, Point target_position) {
   pitch = sin(angle * M_PI / 180.0)*0.3;
   roll = cos(angle * M_PI / 180.0)*0.3;
 
+  #ifdef EMULATE
+    position.x += 50*roll;
+    position.y += 50*pitch; 
+  #endif
   // Управляем дроном
   esp.pitch(pitch);
   esp.roll(roll);
@@ -583,15 +592,33 @@ void loop() {
     //   msp_failed_counter = 0;
     //   esp.begin(Serial2);
     // }
-    Serial.printf("ch6 = %d, ch8 = %d\n", aux1, aux2);
+    // Serial.printf("ch6 = %d, ch8 = %d\n", aux1, aux2);
     alt_hold_on = aux1 >=  1500 ? 1 : 0;
     msp_overwrite = aux2 > 1500 ? 1 : 0;
     
     autopilot_on = alt_hold_on && msp_overwrite;
+    #ifdef EMULATE
+      if (counter_wp_checked >= waypointCounter)
+      {
 
+      }
+      else if (!waypoints.empty()) {
+        Waypoint* current_wp = &waypoints[counter_wp_checked];
+        check_way_point(position, current_wp);
+        update_position({position.x, position.y}, {waypoints[counter_wp_checked].x, waypoints[counter_wp_checked].y});
+        // check_way_point(position, &(waypoints[counter_wp_checked]));
+      }
+    #endif
     if (autopilot_on == 1)
     {
-      if (!waypoints.empty()) {
+      if (counter_wp_checked >= waypointCounter)
+      {
+        esp.throttle(0.2);
+        delay(500);
+        esp.throttle(0);
+        for(;;){}
+      }
+      else if (!waypoints.empty()) {
         Waypoint* current_wp = &waypoints[counter_wp_checked];
         check_way_point(position, current_wp);
         update_position({position.x, position.y}, {waypoints[counter_wp_checked].x, waypoints[counter_wp_checked].y});
