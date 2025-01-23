@@ -534,13 +534,14 @@ void check_way_point(Vector3 drone_pos, Waypoint* wp)
 {
   uint16_t len_x = abs(drone_pos.x - wp->x);
   uint16_t len_y = abs(drone_pos.y - wp->y);
-  if (len_x < 100 && len_y < 100)
+  if (len_x < 200 && len_y < 200)
   {
     wp->checked = 1;
     counter_wp_checked++;
     esp.pitch(0);
     esp.roll(0);
-    delay(1000);
+    esp.throttle(0.3);
+    delay(3000);
   } 
 }
 
@@ -549,7 +550,7 @@ void update_position(Point current_position, Point target_position) {
   angle = calculate_angle(current_position, target_position);
   
   // Рассчитываем наклоны (roll и pitch) для движения к цели
-  pitch = -sin(angle * M_PI / 180.0)*0.3;
+  pitch = sin(angle * M_PI / 180.0)*0.3;
   roll = cos(angle * M_PI / 180.0)*0.3;
 
   // Управляем дроном
@@ -573,15 +574,15 @@ void loop() {
     timer = millis();
     uint16_t aux1 = esp.get_channel(6); //alt hold
     uint16_t aux2 = esp.get_channel(8); //msp overwrite
-    if (aux1 == 0)
-    {
-      msp_failed_counter++;
-    }
-    if (msp_failed_counter >= 10)
-    {
-      msp_failed_counter = 0;
-      esp.begin(Serial2);
-    }
+    // if (aux1 == 0)
+    // {
+    //   msp_failed_counter++;
+    // }
+    // if (msp_failed_counter >= 10)
+    // {
+    //   msp_failed_counter = 0;
+    //   esp.begin(Serial2);
+    // }
     Serial.printf("ch6 = %d, ch8 = %d\n", aux1, aux2);
     alt_hold_on = aux1 >=  1500 ? 1 : 0;
     msp_overwrite = aux2 > 1500 ? 1 : 0;
@@ -594,7 +595,7 @@ void loop() {
         Waypoint* current_wp = &waypoints[counter_wp_checked];
         check_way_point(position, current_wp);
         update_position({position.x, position.y}, {waypoints[counter_wp_checked].x, waypoints[counter_wp_checked].y});
-        check_way_point(position, &(waypoints[counter_wp_checked]));
+        // check_way_point(position, &(waypoints[counter_wp_checked]));
       }
     }
   }
