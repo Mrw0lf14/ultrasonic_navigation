@@ -109,7 +109,6 @@ bool MSP::recv(uint8_t * messageID, void * payload, uint8_t maxSize, uint8_t * r
     if (header[0] == '$' && header[1] == 'M' && header[2] == '>') {
       // header ok, read payload size
       *recvSize = _stream->read();
-
       // read message ID (type)
       *messageID = _stream->read();
 

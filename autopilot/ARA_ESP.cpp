@@ -27,7 +27,7 @@ void IRAM_ATTR onTimer() {
 MSP msp;
 void ARA_ESP::begin(Stream& serial) {
   hw_timer_t* My_timer = NULL;
-  Serial.begin(115200);
+  // Serial.begin(115200);
   msp.begin(serial, 10);
 
   ROLL = 1500;
@@ -56,9 +56,9 @@ void ARA_ESP::begin(Stream& serial) {
   // timerAttachInterrupt(My_timer, &onTimer, true);
   // timerAlarmWrite(My_timer, 10000, true);
   // timerAlarmEnable(My_timer);
-  My_timer = timerBegin(1000000);
-  timerAttachInterrupt(My_timer, &onTimer);
-  timerAlarm(My_timer, 1000, true, 0);
+  // My_timer = timerBegin(1000000);
+  // timerAttachInterrupt(My_timer, &onTimer);
+  // timerAlarm(My_timer, 1000, true, 0);
 }
 
 
@@ -198,11 +198,11 @@ uint16_t ARA_ESP::get_channel(int channel)
     data[i] = (uint16_t)rb[i * 2] | ((uint16_t)rb[i * 2 + 1] << 8);
   }
 
-// for (uint8_t i = 1; i < 32; i+=2)
-//   {
-//     Serial.printf("%d | ", ((uint16_t)rb[i] << 8) | ((uint16_t)rb[i-1]));
-//   }
-//   Serial.println();
+  // for (uint8_t i = 1; i < 32; i+=2)
+  // {
+  //   Serial.printf("%d | ", ((uint16_t)rb[i] << 8) | ((uint16_t)rb[i-1]));
+  // }
+  // Serial.println();
 
   return data[channel-1];
 }
@@ -252,6 +252,7 @@ void ARA_ESP::throttle(float throttle) {
   uint16_t value_motor = (uint16_t)(throttle * 100);
 
   THROTTLE = map(value_motor, old_min_throttle, old_max_throttle, new_min_throttle, new_max_throttle);
+  Serial.printf("ROLL = %d PITCH = %d THROTTLE = %d\n", ROLL, PITCH, THROTTLE);
   main_f();
 }
 
