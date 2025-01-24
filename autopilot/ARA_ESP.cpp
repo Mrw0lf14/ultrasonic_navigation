@@ -252,7 +252,7 @@ void ARA_ESP::throttle(float throttle) {
   uint16_t value_motor = (uint16_t)(throttle * 100);
 
   THROTTLE = map(value_motor, old_min_throttle, old_max_throttle, new_min_throttle, new_max_throttle);
-  Serial.printf("ROLL = %d PITCH = %d THROTTLE = %d\n", ROLL, PITCH, THROTTLE);
+  // Serial.printf("ROLL = %d PITCH = %d THROTTLE = %d\n", ROLL, PITCH, THROTTLE);
   main_f();
 }
 

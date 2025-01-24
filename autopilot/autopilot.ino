@@ -19,6 +19,7 @@ struct Waypoint {
     uint8_t id;
     float x;
     float y;
+    float z;           //throttle
     uint8_t checked = 0;
 };
 std::vector<Waypoint> waypoints;
@@ -46,8 +47,8 @@ struct Point {
   float y;
 };
 
-#define MAX_X 2500
-#define MAX_Y 3000
+uint16_t MAX_X = 2500;
+uint16_t MAX_Y = 3000;
 #define MAX_Z 2400
 #define ka 1
 #define kb 0
@@ -73,6 +74,7 @@ float vectorLength(Vector3 v) {
 float angle;
 float pitch;
 float roll;
+float throttle;
 
 Vector4 intersectionLength(Vector4 c1, Vector4 c2, uint8_t zflag = 0) {
   Vector3 distance = {c2.x - c1.x, c2.y - c1.y, c2.z - c1.z};
@@ -119,11 +121,12 @@ Vector4 intersectionLength(Vector4 c1, Vector4 c2, uint8_t zflag = 0) {
 
 // Обработчик для добавления точки
 void handleAddWaypoint(AsyncWebServerRequest *request) {
-    if (request->hasParam("x") && request->hasParam("y")) {
+    if (request->hasParam("x") && request->hasParam("y") && request->hasParam("z")) {
         float x = request->getParam("x")->value().toFloat();
         float y = request->getParam("y")->value().toFloat();
-
-        waypoints.push_back({ waypointCounter++, x, y });
+        float z = (float)(request->getParam("z")->value().toInt() - 1000) / 1000;
+        Serial.printf("add z %f %d\n", z, request->getParam("z")->value().toInt());
+        waypoints.push_back({ waypointCounter++, x, y, z});
 
         request->send(200, "application/json", "{\"status\":\"success\"}");
     } else {
@@ -133,13 +136,13 @@ void handleAddWaypoint(AsyncWebServerRequest *request) {
 
 // Обработчик для удаления точки
 void handleDeleteWaypoint(AsyncWebServerRequest *request) {
-    if (request->hasParam("id")) {
-        int id = request->getParam("id")->value().toInt();
+    if (request->hasParam("id", true)) {  // true - искать параметр в теле POST-запроса
+        int id = request->getParam("id", true)->value().toInt();
         waypoints.erase(std::remove_if(waypoints.begin(), waypoints.end(), [id](const Waypoint& wp) {
             return wp.id == id;
         }), waypoints.end());
-
         request->send(200, "application/json", "{\"status\":\"success\"}");
+        Serial.println("deleteWaypoint");
     } else {
         request->send(400, "application/json", "{\"status\":\"error\", \"message\":\"Missing parameters\"}");
     }
@@ -155,6 +158,7 @@ void handleGetWaypoints(AsyncWebServerRequest *request) {
         obj["id"] = wp.id;
         obj["x"] = wp.x;
         obj["y"] = wp.y;
+        obj["z"] = 1000 + wp.z*1000;
         obj["checked"] = wp.checked;  // Добавляем статус
     }
 
@@ -168,7 +172,8 @@ void handleSetMapSize(AsyncWebServerRequest *request) {
     if (request->hasParam("width") && request->hasParam("height")) {
         mapWidth = request->getParam("width")->value().toFloat();
         mapHeight = request->getParam("height")->value().toFloat();
-
+        MAX_X = mapWidth;
+        MAX_Y = mapHeight;
         request->send(200, "application/json", "{\"status\":\"success\"}");
     } else {
         request->send(400, "application/json", "{\"status\":\"error\", \"message\":\"Missing parameters\"}");
@@ -176,15 +181,19 @@ void handleSetMapSize(AsyncWebServerRequest *request) {
 }
 
 void handleSetWaypoint(AsyncWebServerRequest *request) {
-    if (request->hasParam("id") && request->hasParam("x") && request->hasParam("y")) {
+    if (request->hasParam("id") && request->hasParam("x") && request->hasParam("y") && request->hasParam("z")) {
         int id = request->getParam("id")->value().toInt();
         float x = request->getParam("x")->value().toFloat();
         float y = request->getParam("y")->value().toFloat();
+        uint16_t z = request->getParam("z")->value().toInt();
 
         for (auto& wp : waypoints) {
             if (wp.id == id) {
                 wp.x = x;
                 wp.y = y;
+                wp.z = (float)(z-1000)/1000;
+                Serial.printf("p%d %d ", id, z);
+                Serial.println(wp.z);
                 break;
             }
         }
@@ -209,10 +218,10 @@ void handleGetDronePosition(AsyncWebServerRequest *request) {
 
 void handleGetChannels(AsyncWebServerRequest *request) {
     DynamicJsonDocument doc(1024);
-    doc["Roll"] = roll;   // Пример
-    doc["Pitch"] = pitch;
-    doc["Throttle"] = 0;
-    doc["Yaw"] = 0;
+    doc["Roll"] = esp.ROLL;   // Пример
+    doc["Pitch"] = esp.PITCH;
+    doc["Throttle"] = esp.THROTTLE;
+    doc["Yaw"] = esp.YAW;
     String response;
     serializeJson(doc, response);
     request->send(200, "application/json", response);
@@ -229,14 +238,14 @@ const char index_html[] PROGMEM = R"rawliteral(
     <title>ESP AUTOPILOT</title>
     <style>
         #map {
-            width: 60%;
-            height: 500px;
+            max-width: 50%;
+            max-height: 600px;
             float: left;
             border: 1px solid black;
             position: relative;
         }
         #sidebar {
-            width: 30%;
+            width: 40%;
             float: right;
         }
         .waypoint {
@@ -301,26 +310,28 @@ const char index_html[] PROGMEM = R"rawliteral(
                 droneElem.className = 'drone';
                 map.appendChild(droneElem);
             }
+
+            // Обновление положения дрона
             droneElem.style.left = `${(drone.x / mapWidth) * 100}%`;
             droneElem.style.top = `${(drone.y / mapHeight) * 100}%`;
 
-            // Угол и вектор
-            const angle = drone.angle || 0; // угол дрона, полученный из данных
-            const vectorElem = document.querySelector('.direction');
+            // Обновление направления
+            let vectorElem = document.querySelector('.direction');
             if (!vectorElem) {
-                const vec = document.createElement('div');
-                vec.className = 'direction';
-                vec.style.position = 'absolute';
-                vec.style.width = '60px';
-                vec.style.height = '2px';
-                vec.style.background = 'green';
-                vec.style.transformOrigin = 'left center';
-                map.appendChild(vec);
+                vectorElem = document.createElement('div');
+                vectorElem.className = 'direction';
+                vectorElem.style.position = 'absolute';
+                vectorElem.style.width = '60px';
+                vectorElem.style.height = '2px';
+                vectorElem.style.background = 'green';
+                vectorElem.style.transformOrigin = 'left center';
+                map.appendChild(vectorElem);
             }
             vectorElem.style.left = `${(drone.x / mapWidth) * 100}%`;
             vectorElem.style.top = `${(drone.y / mapHeight) * 100}%`;
-            vectorElem.style.transform = `rotate(${angle}deg)`;
+            vectorElem.style.transform = `rotate(${drone.angle || 0}deg)`;
         }
+
 
 
         setInterval(updateDronePosition, 100);
@@ -335,10 +346,10 @@ const char index_html[] PROGMEM = R"rawliteral(
                 channelsDiv.appendChild(div);
             }
         }
-        setInterval(updateChannels, 100); // Обновление каждые 250 мс
-        setInterval(fetchWaypoints, 200);
-        async function addWaypoint(x, y) {
-            const response = await fetch(`/add?x=${x}&y=${y}`, { method: 'POST' });
+        setInterval(updateChannels, 500); // Обновление каждые 250 мс
+
+        async function addWaypoint(x, y, z) {
+            const response = await fetch(`/add?x=${x}&y=${y}&z=${z}`, { method: 'POST' });
             const result = await response.json();
             if (result.status === 'success') {
                 fetchWaypoints();
@@ -346,7 +357,11 @@ const char index_html[] PROGMEM = R"rawliteral(
         }
 
         async function deleteWaypoint(id) {
-            const response = await fetch(`/delete?id=${id}`, { method: 'POST' });
+            const response = await fetch('/delete', { 
+                method: 'POST', 
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: `id=${id}`
+            })
             const result = await response.json();
             if (result.status === 'success') {
                 fetchWaypoints();
@@ -359,10 +374,17 @@ const char index_html[] PROGMEM = R"rawliteral(
             if (result.status === 'success') {
                 mapWidth = width;
                 mapHeight = height;
+
+                // Обновление размеров карты
+                const map = document.getElementById('map');
+                map.style.width = `${width / 5}px`;
+                map.style.height = `${height / 5}px`;
+
                 alert('Map size updated');
                 fetchWaypoints();
             }
         }
+
 
         async function fetchWaypoints() {
             const response = await fetch('/waypoints');
@@ -390,9 +412,14 @@ const char index_html[] PROGMEM = R"rawliteral(
                 inputY.value = wp.y;
                 inputY.style.marginRight = '5px';
 
+                const inputZ = document.createElement('input');
+                inputZ.type = 'number';
+                inputZ.value = wp.z;
+                inputZ.style.marginRight = '5px';
+
                 const applyButton = document.createElement('button');
                 applyButton.innerText = 'Применить';
-                applyButton.onclick = () => updateWaypoint(wp.id, parseFloat(inputX.value), parseFloat(inputY.value));
+                applyButton.onclick = () => updateWaypoint(wp.id, parseFloat(inputX.value), parseFloat(inputY.value), parseInt(inputZ.value));
 
                 const deleteButton = document.createElement('button');
                 deleteButton.innerText = 'Удалить';
@@ -400,6 +427,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 
                 div.appendChild(inputX);
                 div.appendChild(inputY);
+                div.appendChild(inputZ);
                 div.appendChild(applyButton);
                 div.appendChild(deleteButton);
                 sidebar.appendChild(div);
@@ -419,8 +447,8 @@ const char index_html[] PROGMEM = R"rawliteral(
             });
         }
 
-        async function updateWaypoint(id, x, y) {
-            const response = await fetch(`/set_waypoint?id=${id}&x=${x}&y=${y}`, { method: 'POST' });
+        async function updateWaypoint(id, x, y, z) {
+            const response = await fetch(`/set_waypoint?id=${id}&x=${x}&y=${y}&z=${z}`, { method: 'POST' });
             const result = await response.json();
             if (result.status === 'success') {
                 fetchWaypoints();
@@ -433,7 +461,8 @@ const char index_html[] PROGMEM = R"rawliteral(
                 const rect = map.getBoundingClientRect();
                 const x = ((e.clientX - rect.left) / rect.width) * mapWidth;
                 const y = ((e.clientY - rect.top) / rect.height) * mapHeight;
-                addWaypoint(x.toFixed(2), y.toFixed(2));
+                const z = 1500;
+                addWaypoint(x.toFixed(2), y.toFixed(2), z);
             });
 
             const setMapButton = document.getElementById('setMapSize');
@@ -459,8 +488,6 @@ const char index_html[] PROGMEM = R"rawliteral(
         <label>Ширина: <input type="number" id="mapWidth" value="3000" style="margin-right: 10px;"></label>
         <label>Высота: <input type="number" id="mapHeight" value="3000" style="margin-right: 10px;"></label>
         <button id="setMapSize">Применить</button>
-    <h4>Точки маршрута</h4>
-    <div id="waypoints"></div>
     <h4>Точки маршрута</h4>
     <div id="waypoints"></div>
     <h4>Данные каналов</h4>
@@ -552,27 +579,29 @@ void check_way_point(Vector3 drone_pos, Waypoint* wp)
 }
 
 // Функция для обновления положения дрона
-void update_position(Point current_position, Point target_position) {
-  angle = calculate_angle(current_position, target_position);
+void update_position(Point current_position, Vector3 target_position) {
+  angle = calculate_angle(current_position, {target_position.x, target_position.y});
   
   // Рассчитываем наклоны (roll и pitch) для движения к цели
   pitch = sin(angle * M_PI / 180.0)*0.3;
   roll = cos(angle * M_PI / 180.0)*0.3;
+  throttle = target_position.z;
 
   #ifdef EMULATE
     position.x += 50*roll;
     position.y += 50*pitch; 
   #endif
+
   // Управляем дроном
   esp.pitch(pitch);
   esp.roll(roll);
-  esp.throttle(0.5); // Поддержание скорости (примерная мощность)
-  Serial.printf("%d %d\n", pitch, roll);
+  esp.throttle(throttle); // Поддержание скорости (примерная мощность)
+  // Serial.printf("%d %d\n", pitch, roll);
   // Выводим информацию в Serial
-  Serial.print("Current Position: X=");
-  Serial.print(current_position.x);
-  Serial.print(", Y=");
-  Serial.println(current_position.y);
+  // Serial.print("Current Position: X=");
+  // Serial.print(current_position.x);
+  // Serial.print(", Y=");
+  // Serial.println(current_position.y);
 }
 
 
@@ -584,16 +613,8 @@ void loop() {
     timer = millis();
     uint16_t aux1 = esp.get_channel(6); //alt hold
     uint16_t aux2 = esp.get_channel(8); //msp overwrite
-    // if (aux1 == 0)
-    // {
-    //   msp_failed_counter++;
-    // }
-    // if (msp_failed_counter >= 10)
-    // {
-    //   msp_failed_counter = 0;
-    //   esp.begin(Serial2);
-    // }
-    Serial.printf("ch6 = %d, ch8 = %d\n", aux1, aux2);
+
+    // Serial.printf("ch6 = %d, ch8 = %d\n", aux1, aux2);
     alt_hold_on = aux1 >=  1500 ? 1 : 0;
     msp_overwrite = aux2 > 1500 ? 1 : 0;
     
@@ -606,19 +627,22 @@ void loop() {
       else if (!waypoints.empty()) {
         Waypoint* current_wp = &waypoints[counter_wp_checked];
         check_way_point(position, current_wp);
-        update_position({position.x, position.y}, {waypoints[counter_wp_checked].x, waypoints[counter_wp_checked].y});
-        // check_way_point(position, &(waypoints[counter_wp_checked]));
+        update_position({position.x, position.y}, {waypoints[counter_wp_checked].x, waypoints[counter_wp_checked].y, waypoints[counter_wp_checked].z});
       }
     #endif
     if (autopilot_on == 1)
     {
       if (counter_wp_checked >= waypointCounter)
       {
-        esp.throttle(0.2);
-        esp.roll(0);
-        esp.pitch(0);
+        throttle = 0.2;
+        roll = 0;
+        pitch = 0;
+        esp.throttle(throttle);
+        esp.roll(roll);
+        esp.pitch(pitch);
         delay(1000);
-        esp.throttle(0);
+        throttle = 0;
+        esp.throttle(throttle);
         for(;;){}
       }
       else if (!waypoints.empty()) {

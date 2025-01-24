@@ -6,6 +6,10 @@
 class ARA_ESP
 {
   public:
+  uint16_t ROLL;
+  uint16_t PITCH;
+  uint16_t YAW;
+  uint16_t THROTTLE;
   void begin(Stream& serial);
   void roll(float roll);
   void pitch(float pitch);
@@ -28,11 +32,6 @@ class ARA_ESP
   
   bool flag_data;
   private:
-
-  uint16_t ROLL;
-  uint16_t PITCH;
-  uint16_t YAW;
-  uint16_t THROTTLE;
   uint16_t AUX1;
   uint16_t AUX2;
   uint16_t AUX3;
