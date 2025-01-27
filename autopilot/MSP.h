@@ -64,7 +64,7 @@
 #define MSP_SET_PID              202 // set P I D coeff
 #define MSP_GET_ESP_SLEEP            140
 #define MSP_SET_ESP_SLEEP            141
-
+#define MSP_DEBUG                254  // out message: debug1,debug2,debug3,debug4
 
 // commands
 #define MSP_SET_HEAD             211 // define a new heading hold direction

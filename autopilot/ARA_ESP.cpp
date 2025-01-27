@@ -207,6 +207,25 @@ uint16_t ARA_ESP::get_channel(int channel)
   return data[channel-1];
 }
 
+void ARA_ESP::get_optical_flow(int32_t &delta_x, int32_t &delta_y, int32_t &delta_z, int32_t &flow_not_used) 
+{
+    uint8_t rb[16] = {0}; // Буфер для получения данных от MSP
+    msp.request(MSP_DEBUG, rb, sizeof(rb), NULL); // Отправляем запрос MSP_DEBUG
+
+    // Парсим данные (по спецификации MSP_DEBUG для FLOW_RAW):
+    int16_t raw_delta_x = (int16_t)(rb[0] | (rb[1] << 8)); // Смещение по X
+    int16_t raw_delta_y = (int16_t)(rb[2] | (rb[3] << 8)); // Смещение по Y
+    int16_t raw_delta_z = (int16_t)(rb[4] | (rb[5] << 8));  // Скорость потока по X
+    int16_t raw_not_used = (int16_t)(rb[6] | (rb[7] << 8));  // Скорость потока по Y
+
+    // Преобразуем в значения с плавающей точкой, если требуется
+    delta_x = raw_delta_x * 10; // Делим на 100 для перевода в милиметры (если INAV использует стандартную масштабировку)
+    delta_y = raw_delta_y * 10;
+    delta_z = raw_delta_z * 10;
+    flow_not_used = raw_not_used * 10;
+}
+
+
 void ARA_ESP::roll(float roll) {
   float old_max_roll = 100;
   float old_min_roll = -100;

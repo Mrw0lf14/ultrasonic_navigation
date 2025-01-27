@@ -19,7 +19,8 @@ class ARA_ESP
   void flight_mode(int f_mode);
   void nav_mode(int n_mode);
   uint16_t get_channel(int channel);
-  
+  void get_optical_flow(int32_t &delta_x, int32_t &delta_y, int32_t &delta_z, int32_t &flow_not_used);
+
   void main_f();
   void gps_f();
   void gps_fix(uint8_t fix);

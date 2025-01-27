@@ -42,9 +42,24 @@ struct Vector3 {
 };
 
 // Структура для представления точки
-struct Point {
+struct Vector2 {
   float x;
   float y;
+};
+
+// Структура для состояния фильтра Калмана
+struct KalmanFilter {
+    float x;  // Положение по оси X
+    float y;  // Положение по оси Y
+    float z;  // Положение по оси Z
+    float vx; // Скорость по оси X
+    float vy; // Скорость по оси Y
+    float vz; // Скорость по оси Z
+    float p[3][3]; // Ковариационная матрица
+
+    // Параметры фильтра
+    float process_noise;  // Процессный шум
+    float measurement_noise; // Шум измерений
 };
 
 uint16_t MAX_X = 2500;
@@ -74,7 +89,55 @@ float vectorLength(Vector3 v) {
 float angle;
 float pitch;
 float roll;
+float yaw;
 float throttle;
+
+KalmanFilter kalman = {
+    .x = 0, .y = 0, .z = 0,
+    .vx = 0, .vy = 0, .vz = 0,
+    .p = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}},
+    .process_noise = 0.01,
+    .measurement_noise = 0.1
+};
+
+// Обновление фильтра Калмана
+void kalman_update(KalmanFilter &kf, float measurement_x, float measurement_y, float measurement_z, float dt) {
+    // Prediction step
+    kf.x += kf.vx * dt;
+    kf.y += kf.vy * dt;
+    kf.z += kf.vz * dt;
+
+    // Обновление ковариационной матрицы
+    for (int i = 0; i < 3; i++) {
+        kf.p[i][i] += kf.process_noise;
+    }
+
+    // Measurement update
+    float gain[3];
+    for (int i = 0; i < 3; i++) {
+        gain[i] = kf.p[i][i] / (kf.p[i][i] + kf.measurement_noise);
+        kf.p[i][i] *= (1 - gain[i]);
+    }
+
+    kf.x += gain[0] * (measurement_x - kf.x);
+    kf.y += gain[1] * (measurement_y - kf.y);
+    kf.z += gain[2] * (measurement_z - kf.z);
+}
+
+// Фильтрация позиции с использованием оптического потока и УЗ-навигации
+void update_position_with_kalman(float dt, int32_t opt_flow_vx, int32_t opt_flow_vy, int32_t opt_flow_vz, float measured_x, float measured_y, float measured_z) {
+    // Обновляем скорости из оптического потока
+    kalman.vx = opt_flow_vx;      // Конвертируем из мм/с в м/с
+    kalman.vy = opt_flow_vy;
+    kalman.vz = opt_flow_vz;
+
+    // Обновляем позицию с помощью Калмана
+    kalman_update(kalman, measured_x, measured_y, measured_z, dt);
+
+    // Выводим позицию
+    Serial.printf("Filtered position: X = %.2f, Y = %.2f, Z = %.2f\n", kalman.x, kalman.y, kalman.z);
+}
+
 
 Vector4 intersectionLength(Vector4 c1, Vector4 c2, uint8_t zflag = 0) {
   Vector3 distance = {c2.x - c1.x, c2.y - c1.y, c2.z - c1.z};
@@ -221,7 +284,7 @@ void handleGetChannels(AsyncWebServerRequest *request) {
     doc["Roll"] = esp.ROLL;   // Пример
     doc["Pitch"] = esp.PITCH;
     doc["Throttle"] = esp.THROTTLE;
-    doc["Yaw"] = esp.YAW;
+    doc["Yaw"] = yaw;                 //чтобы чекать msp
     String response;
     serializeJson(doc, response);
     request->send(200, "application/json", response);
@@ -548,8 +611,8 @@ void setup() {
 
 
 // Заданные точки
-Point current_position = {0, 0}; // Начальная позиция дрона
-Point target_position = {5, 5}; // Целевая позиция
+Vector2 current_position = {0, 0}; // Начальная позиция дрона
+Vector2 target_position = {5, 5}; // Целевая позиция
 
 // Параметры управления
 uint16_t speed = 100;        // Скорость движения (м/с)
@@ -560,7 +623,7 @@ uint8_t msp_overwrite = 0;
 uint8_t alt_hold_on = 0;
 uint8_t autopilot_on = 0;
 // Функция для вычисления угла между двумя точками
-float calculate_angle(Point from, Point to) {
+float calculate_angle(Vector2 from, Vector2 to) {
   return atan2(to.y - from.y, to.x - from.x) * 180.0 / M_PI;
 }
 
@@ -579,7 +642,7 @@ void check_way_point(Vector3 drone_pos, Waypoint* wp)
 }
 
 // Функция для обновления положения дрона
-void update_position(Point current_position, Vector3 target_position) {
+void update_position(Vector2 current_position, Vector3 target_position) {
   angle = calculate_angle(current_position, {target_position.x, target_position.y});
   
   // Рассчитываем наклоны (roll и pitch) для движения к цели
@@ -611,14 +674,30 @@ void loop() {
   if (diff_timer > 200)
   {
     timer = millis();
-    uint16_t aux1 = esp.get_channel(6); //alt hold
-    uint16_t aux2 = esp.get_channel(8); //msp overwrite
-
-    // Serial.printf("ch6 = %d, ch8 = %d\n", aux1, aux2);
+    uint16_t aux1, aux2;
+    aux1 = esp.get_channel(6); //alt hold
+    aux2 = esp.get_channel(8); //msp overwrite
+    yaw = aux1;
+    Serial.printf("ch6 = %d, ch8 = %d\n", aux1, aux2);
     alt_hold_on = aux1 >=  1500 ? 1 : 0;
     msp_overwrite = aux2 > 1500 ? 1 : 0;
-    
+    if (aux1 == 0)
+    {
+      msp_failed_counter++;
+    }
+    else 
+    {
+      msp_failed_counter = 0;
+    }
+    if (msp_failed_counter > 10)
+    {
+      ESP.restart(); 
+    }
+    // delay(10);
     autopilot_on = alt_hold_on && msp_overwrite;
+      // int32_t opt_flow_vx, opt_flow_vy, opt_flow_vz, opt_flow_not_used;
+      // esp.get_optical_flow(opt_flow_vx, opt_flow_vy, opt_flow_vz, opt_flow_not_used);
+      // Serial.printf("OF : %d %d %d %d\n", opt_flow_vx, opt_flow_vy, opt_flow_vz, opt_flow_not_used);
     #ifdef EMULATE
       if (counter_wp_checked >= waypointCounter)
       {
@@ -648,8 +727,7 @@ void loop() {
       else if (!waypoints.empty()) {
         Waypoint* current_wp = &waypoints[counter_wp_checked];
         check_way_point(position, current_wp);
-        update_position({position.x, position.y}, {waypoints[counter_wp_checked].x, waypoints[counter_wp_checked].y});
-        // check_way_point(position, &(waypoints[counter_wp_checked]));
+        update_position({position.x, position.y}, {waypoints[counter_wp_checked].x, waypoints[counter_wp_checked].y, waypoints[counter_wp_checked].z});
       }
     }
   }
@@ -662,31 +740,30 @@ void loop() {
     head[3] = DXL_SERIAL.read();
     if (strncmp(head, "DATA", 4) == 0)
     {
-      String packet = DXL_SERIAL.readStringUntil('\n');
-      int num1, num2, num3;
-      sscanf(packet.c_str(), " %d %d %d", &num1, &num2, &num3);
-      if (num1 < 4)
-      {     
-        p[num1].r = num2*ka + kb;
+      float dt = 0.04; // Предположительно 40 мс между измерениями
 
-        Vector4 r[4];
-        r[0] = intersectionLength(p[0], p[1], 0);
-        r[1] = intersectionLength(p[0], p[2], 0);
-        r[2] = intersectionLength(p[2], p[3], 0);
-        r[3] = intersectionLength(p[1], p[3], 0);
+      int32_t opt_flow_vx, opt_flow_vy, opt_flow_vz, opt_flow_not_used;
+      esp.get_optical_flow(opt_flow_vx, opt_flow_vy, opt_flow_vz, opt_flow_not_used);
 
-        position.x = (r[0].x + r[2].x)/2;
-        position.y = (r[1].y + r[3].y)/2;
-        Vector4 rcr[2];
-        rcr[0] = intersectionLength(r[0], r[2], 1);
-        rcr[1] = intersectionLength(r[1], r[3], 1);
-        position.z = (rcr[0].z + rcr[1].z)/2;
-        position.x = constrain(position.x, 0, MAX_X);
-        position.y = constrain(position.y, 0, MAX_Y);
-        position.z = constrain(position.z, 0, MAX_Z);
-        Serial.printf("pos = %f %f %f\n", position.x, position.y, position.z);
-      }
+      Vector4 r[4];
+      r[0] = intersectionLength(p[0], p[1], 0);
+      r[1] = intersectionLength(p[0], p[2], 0);
+      r[2] = intersectionLength(p[2], p[3], 0);
+      r[3] = intersectionLength(p[1], p[3], 0);
+
+      float measured_x = (r[0].x + r[2].x) / 2;
+      float measured_y = (r[1].y + r[3].y) / 2;
+      Vector4 rcr[2];
+      rcr[0] = intersectionLength(r[0], r[2], 1);
+      rcr[1] = intersectionLength(r[1], r[3], 1);
+      float measured_z = (rcr[0].z + rcr[1].z) / 2;
+
+      measured_x = constrain(measured_x, 0, MAX_X);
+      measured_y = constrain(measured_y, 0, MAX_Y);
+      measured_z = constrain(measured_z, 0, MAX_Z);
+
+      // Применяем фильтр Калмана
+      update_position_with_kalman(dt, opt_flow_vx, opt_flow_vy, opt_flow_vz, measured_x, measured_y, measured_z);
     }
   }
-    
 }
