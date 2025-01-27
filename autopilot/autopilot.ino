@@ -7,7 +7,7 @@
 
 
 // #define EMULATE
-
+#define TEST_KALMAN
 
 const char* ssid = "ESP_AUTOPILOT";
 const char* password = "12345678";
@@ -97,7 +97,7 @@ KalmanFilter kalman = {
     .vx = 0, .vy = 0, .vz = 0,
     .p = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}},
     .process_noise = 0.01,
-    .measurement_noise = 0.1
+    .measurement_noise = 0.05
 };
 
 // Обновление фильтра Калмана
@@ -124,18 +124,20 @@ void kalman_update(KalmanFilter &kf, float measurement_x, float measurement_y, f
     kf.z += gain[2] * (measurement_z - kf.z);
 }
 
-// Фильтрация позиции с использованием оптического потока и УЗ-навигации
+// Фильтрация позиции
 void update_position_with_kalman(float dt, int32_t opt_flow_vx, int32_t opt_flow_vy, int32_t opt_flow_vz, float measured_x, float measured_y, float measured_z) {
-    // Обновляем скорости из оптического потока
-    kalman.vx = opt_flow_vx;      // Конвертируем из мм/с в м/с
-    kalman.vy = opt_flow_vy;
-    kalman.vz = opt_flow_vz;
+    // Конвертируем скорости
+    kalman.vx = opt_flow_vx / 1000.0;
+    kalman.vy = opt_flow_vy / 1000.0;
+    kalman.vz = opt_flow_vz / 1000.0;
 
     // Обновляем позицию с помощью Калмана
     kalman_update(kalman, measured_x, measured_y, measured_z, dt);
 
-    // Выводим позицию
-    Serial.printf("Filtered position: X = %.2f, Y = %.2f, Z = %.2f\n", kalman.x, kalman.y, kalman.z);
+    // Выводим данные
+    position.x = kalman.x;
+    position.y = kalman.y;
+    position.z = kalman.z;
 }
 
 
@@ -615,10 +617,7 @@ Vector2 current_position = {0, 0}; // Начальная позиция дрон
 Vector2 target_position = {5, 5}; // Целевая позиция
 
 // Параметры управления
-uint16_t speed = 100;        // Скорость движения (м/с)
-float tolerance = 0.1;    // Допустимая погрешность в метрах
-float update_interval = 0.1; // Интервал обновления (с)
-uint8_t counter_wp_checked = 0;\
+uint8_t counter_wp_checked = 0;
 uint8_t msp_overwrite = 0;
 uint8_t alt_hold_on = 0;
 uint8_t autopilot_on = 0;
@@ -666,7 +665,20 @@ void update_position(Vector2 current_position, Vector3 target_position) {
   // Serial.print(", Y=");
   // Serial.println(current_position.y);
 }
+#ifdef TEST_KALMAN
+float dt = 0.1;
+int32_t opt_flow_vx, opt_flow_vy, opt_flow_vz, opt_flow_not_used;
+float measured_x, measured_y, measured_z;
+float counter_pi = 0.0;
 
+// Теоретические значения без шума
+float true_x, true_y, true_z;
+float true_vx, true_vy, true_vz;
+// Генерация шума
+float add_noise(float value, float noise_level) {
+    return value + ((rand() % 2000 - 1000) / 1000.0) * noise_level;
+}
+#endif
 
 uint8_t msp_failed_counter = 0;
 void loop() {
@@ -681,7 +693,8 @@ void loop() {
     Serial.printf("ch6 = %d, ch8 = %d\n", aux1, aux2);
     alt_hold_on = aux1 >=  1500 ? 1 : 0;
     msp_overwrite = aux2 > 1500 ? 1 : 0;
-    if (aux1 == 0)
+    #ifndef TEST_KALMAN || EMULATE
+    if (aux1 == 0 && aux2 == 0)
     {
       msp_failed_counter++;
     }
@@ -693,6 +706,7 @@ void loop() {
     {
       ESP.restart(); 
     }
+    #endif
     // delay(10);
     autopilot_on = alt_hold_on && msp_overwrite;
       // int32_t opt_flow_vx, opt_flow_vy, opt_flow_vz, opt_flow_not_used;
@@ -740,30 +754,71 @@ void loop() {
     head[3] = DXL_SERIAL.read();
     if (strncmp(head, "DATA", 4) == 0)
     {
-      float dt = 0.04; // Предположительно 40 мс между измерениями
+      String packet = DXL_SERIAL.readStringUntil('\n');
+      int num1, num2, num3;
+      sscanf(packet.c_str(), " %d %d %d", &num1, &num2, &num3);
+      if (num1 < 4)
+      {     
+        p[num1].r = num2*ka + kb;
+        float dt = 0.05; // Предположительно 40 мс между измерениями
+        delay(10);
+        int32_t opt_flow_vx, opt_flow_vy, opt_flow_vz, opt_flow_not_used;
+        esp.get_optical_flow(opt_flow_vx, opt_flow_vy, opt_flow_vz, opt_flow_not_used);
 
-      int32_t opt_flow_vx, opt_flow_vy, opt_flow_vz, opt_flow_not_used;
-      esp.get_optical_flow(opt_flow_vx, opt_flow_vy, opt_flow_vz, opt_flow_not_used);
+        Vector4 r[4];
+        r[0] = intersectionLength(p[0], p[1], 0);
+        r[1] = intersectionLength(p[0], p[2], 0);
+        r[2] = intersectionLength(p[2], p[3], 0);
+        r[3] = intersectionLength(p[1], p[3], 0);
 
-      Vector4 r[4];
-      r[0] = intersectionLength(p[0], p[1], 0);
-      r[1] = intersectionLength(p[0], p[2], 0);
-      r[2] = intersectionLength(p[2], p[3], 0);
-      r[3] = intersectionLength(p[1], p[3], 0);
+        float measured_x = (r[0].x + r[2].x) / 2;
+        float measured_y = (r[1].y + r[3].y) / 2;
+        Vector4 rcr[2];
+        rcr[0] = intersectionLength(r[0], r[2], 1);
+        rcr[1] = intersectionLength(r[1], r[3], 1);
+        float measured_z = (rcr[0].z + rcr[1].z) / 2;
 
-      float measured_x = (r[0].x + r[2].x) / 2;
-      float measured_y = (r[1].y + r[3].y) / 2;
-      Vector4 rcr[2];
-      rcr[0] = intersectionLength(r[0], r[2], 1);
-      rcr[1] = intersectionLength(r[1], r[3], 1);
-      float measured_z = (rcr[0].z + rcr[1].z) / 2;
-
-      measured_x = constrain(measured_x, 0, MAX_X);
-      measured_y = constrain(measured_y, 0, MAX_Y);
-      measured_z = constrain(measured_z, 0, MAX_Z);
-
-      // Применяем фильтр Калмана
-      update_position_with_kalman(dt, opt_flow_vx, opt_flow_vy, opt_flow_vz, measured_x, measured_y, measured_z);
+        measured_x = constrain(measured_x, 0, MAX_X);
+        measured_y = constrain(measured_y, 0, MAX_Y);
+        measured_z = constrain(measured_z, 0, MAX_Z);
+        Serial.printf("rawUS: %f %f %f", measured_x, measured_y, measured_z);
+        // Применяем фильтр Калмана
+        update_position_with_kalman(dt, opt_flow_vx, opt_flow_vy, opt_flow_vz, measured_x, measured_y, measured_z);
+      }
     }
   }
+
+  #ifdef TEST_KALMAN
+
+    true_x = sin(2 * M_PI * counter_pi) * 1000 + 1500;
+    true_y = cos(2 * M_PI * counter_pi) * 1000 + 1500;
+    true_z = 1000;
+
+    // Теоретические скорости
+    true_vx = 2 * M_PI * cos(2 * M_PI * counter_pi) * 1000 * 0.01;
+    true_vy = -2 * M_PI * sin(2 * M_PI * counter_pi) * 1000 * 0.01;
+    true_vz = 0;
+
+    // Добавляем шум в измеренные значения
+    measured_x = add_noise(true_x, 100); // 50 - уровень шума
+    measured_y = add_noise(true_y, 100);
+    measured_z = add_noise(true_z, 0);
+
+    // // Имитируем оптический поток (перевод скоростей в int32_t)
+    opt_flow_vx = (int32_t)(add_noise(true_vx, 5) * 1000); // Уровень шума для скоростей
+    opt_flow_vy = (int32_t)(add_noise(true_vy, 5) * 1000);
+    opt_flow_vz = (int32_t)(add_noise(true_vz, 1) * 1000);
+
+    // Обновляем фильтр Калмана
+    update_position_with_kalman(dt, opt_flow_vx, opt_flow_vy, opt_flow_vz, measured_x, measured_y, measured_z);
+    angle = calculate_angle({0, 0}, {true_vx, true_vy});
+    // Вывод теоретических и измеренных значений
+    Serial.printf("REAL  : X = %.2f, Y = %.2f, Z = %.2f\n", true_x, true_y, true_z);
+    Serial.printf("MEAS  : X = %.2f, Y = %.2f, Z = %.2f\n", measured_x, measured_y, measured_z);
+    Serial.printf("KALMAN: X = %.2f, Y = %.2f, Z = %.2f\n", kalman.x, kalman.y, kalman.z);
+    Serial.printf("VELOC : VX = %.2f, VY = %.2f, VZ = %.2f\n", true_vx, true_vy, true_vz);
+    Serial.println();
+    counter_pi += 0.01; // Обновляем фазу
+    delay(100);         // Задержка для имитации времени
+  #endif
 }
