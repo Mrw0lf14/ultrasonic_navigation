@@ -4,10 +4,9 @@
 #include <math.h>
 #include "ARA_ESP.h"
 #include "DxlMaster2.h"
-
+#include <SPIFFS.h>
 
 // #define EMULATE
-
 
 const char* ssid = "ESP_AUTOPILOT";
 const char* password = "12345678";
@@ -227,286 +226,29 @@ void handleGetChannels(AsyncWebServerRequest *request) {
     request->send(200, "application/json", response);
 }
 
-
-
-// HTML-страница
-const char index_html[] PROGMEM = R"rawliteral(
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset = "utf-8">
-    <title>ESP AUTOPILOT</title>
-    <style>
-        #map {
-            max-width: 50%;
-            max-height: 600px;
-            float: left;
-            border: 1px solid black;
-            position: relative;
-        }
-        #sidebar {
-            width: 40%;
-            float: right;
-        }
-        .waypoint {
-            margin: 5px 0;
-        }
-        .map-point {
-            width: 10px;
-            height: 10px;
-            background: red;
-            position: absolute;
-            border-radius: 50%;
-        }
-        .drone {
-            position: absolute;
-            border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            background: blue;
-            background-size: cover;
-        }
-        .direction {
-            position: absolute;
-            background: green;
-            height: 2px;
-            transform-origin: 0% 50%;
-        }
-
-    </style>
-    <script>
-        let waypoints = [];
-        let mapWidth = 3000;
-        let mapHeight = 3000;
-        let drone = { x: 50, y: 50 };
-
-        async function updateDronePosition() {
-            const response = await fetch('/get_drone_position');
-            const data = await response.json();
-            drone = { x: data.x, y: data.y, angle: data.angle };
-            const droneDiv = document.getElementById('drone_data');
-            droneDiv.innerHTML = ''; // Очистка перед обновлением
-
-            const xDiv = document.createElement('div');
-            xDiv.innerText = `Pos X: ${data.x}`;
-            droneDiv.appendChild(xDiv);
-
-            const yDiv = document.createElement('div');
-            yDiv.innerText = `Pos Y: ${data.y}`;
-            droneDiv.appendChild(yDiv);
-
-            const angleDiv = document.createElement('div');
-            angleDiv.innerText = `Angle: ${data.angle}`;
-            droneDiv.appendChild(angleDiv);
-
-            renderDrone();
-        }
-
-        function renderDrone() {
-            const map = document.getElementById('map');
-            let droneElem = document.querySelector('.drone');
-            if (!droneElem) {
-                droneElem = document.createElement('div');
-                droneElem.className = 'drone';
-                map.appendChild(droneElem);
-            }
-
-            // Обновление положения дрона
-            droneElem.style.left = `${(drone.x / mapWidth) * 100}%`;
-            droneElem.style.top = `${(drone.y / mapHeight) * 100}%`;
-
-            // Обновление направления
-            let vectorElem = document.querySelector('.direction');
-            if (!vectorElem) {
-                vectorElem = document.createElement('div');
-                vectorElem.className = 'direction';
-                vectorElem.style.position = 'absolute';
-                vectorElem.style.width = '60px';
-                vectorElem.style.height = '2px';
-                vectorElem.style.background = 'green';
-                vectorElem.style.transformOrigin = 'left center';
-                map.appendChild(vectorElem);
-            }
-            vectorElem.style.left = `${(drone.x / mapWidth) * 100}%`;
-            vectorElem.style.top = `${(drone.y / mapHeight) * 100}%`;
-            vectorElem.style.transform = `rotate(${drone.angle || 0}deg)`;
-        }
-
-
-
-        setInterval(updateDronePosition, 100);
-        async function updateChannels() {
-            const response = await fetch('/get_channels');
-            const channels = await response.json();
-            const channelsDiv = document.getElementById('channels');
-            channelsDiv.innerHTML = ''; // Очистка перед обновлением
-            for (const [channel, value] of Object.entries(channels)) {
-                const div = document.createElement('div');
-                div.innerText = `Канал ${channel}: ${value}`;
-                channelsDiv.appendChild(div);
-            }
-        }
-        setInterval(updateChannels, 500); // Обновление каждые 250 мс
-
-        async function addWaypoint(x, y, z) {
-            const response = await fetch(`/add?x=${x}&y=${y}&z=${z}`, { method: 'POST' });
-            const result = await response.json();
-            if (result.status === 'success') {
-                fetchWaypoints();
-            }
-        }
-
-        async function deleteWaypoint(id) {
-            const response = await fetch('/delete', { 
-                method: 'POST', 
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: `id=${id}`
-            })
-            const result = await response.json();
-            if (result.status === 'success') {
-                fetchWaypoints();
-            }
-        }
-
-        async function setMapSize(width, height) {
-            const response = await fetch(`/set_map_size?width=${width}&height=${height}`, { method: 'POST' });
-            const result = await response.json();
-            if (result.status === 'success') {
-                mapWidth = width;
-                mapHeight = height;
-
-                // Обновление размеров карты
-                const map = document.getElementById('map');
-                map.style.width = `${width / 5}px`;
-                map.style.height = `${height / 5}px`;
-
-                alert('Map size updated');
-                fetchWaypoints();
-            }
-        }
-
-
-        async function fetchWaypoints() {
-            const response = await fetch('/waypoints');
-            waypoints = await response.json();
-            renderWaypoints();
-        }
-
-        function renderWaypoints() {
-            const sidebar = document.getElementById('waypoints');
-            const map = document.getElementById('map');
-            sidebar.innerHTML = '';
-            map.innerHTML = '';
-            waypoints.forEach(wp => {
-                // Отображение в списке
-                const div = document.createElement('div');
-                div.className = 'waypoint';
-
-                const inputX = document.createElement('input');
-                inputX.type = 'number';
-                inputX.value = wp.x;
-                inputX.style.marginRight = '5px';
-
-                const inputY = document.createElement('input');
-                inputY.type = 'number';
-                inputY.value = wp.y;
-                inputY.style.marginRight = '5px';
-
-                const inputZ = document.createElement('input');
-                inputZ.type = 'number';
-                inputZ.value = wp.z;
-                inputZ.style.marginRight = '5px';
-
-                const applyButton = document.createElement('button');
-                applyButton.innerText = 'Применить';
-                applyButton.onclick = () => updateWaypoint(wp.id, parseFloat(inputX.value), parseFloat(inputY.value), parseInt(inputZ.value));
-
-                const deleteButton = document.createElement('button');
-                deleteButton.innerText = 'Удалить';
-                deleteButton.onclick = () => deleteWaypoint(wp.id);
-
-                div.appendChild(inputX);
-                div.appendChild(inputY);
-                div.appendChild(inputZ);
-                div.appendChild(applyButton);
-                div.appendChild(deleteButton);
-                sidebar.appendChild(div);
-
-                // Отображение на карте
-                const point = document.createElement('div');
-                point.className = 'map-point';
-                point.style.left = `${(wp.x / mapWidth) * 100}%`;
-                point.style.top = `${(wp.y / mapHeight) * 100}%`;
-
-                // Закрашиваем точку в зеленый, если достигнута
-                if (wp.checked === 1) {
-                    point.style.background = 'green';
-                }
-
-                map.appendChild(point);
-            });
-        }
-
-        async function updateWaypoint(id, x, y, z) {
-            const response = await fetch(`/set_waypoint?id=${id}&x=${x}&y=${y}&z=${z}`, { method: 'POST' });
-            const result = await response.json();
-            if (result.status === 'success') {
-                fetchWaypoints();
-            }
-        }
-
-        document.addEventListener('DOMContentLoaded', () => {
-            const map = document.getElementById('map');
-            map.addEventListener('click', (e) => {
-                const rect = map.getBoundingClientRect();
-                const x = ((e.clientX - rect.left) / rect.width) * mapWidth;
-                const y = ((e.clientY - rect.top) / rect.height) * mapHeight;
-                const z = 1500;
-                addWaypoint(x.toFixed(2), y.toFixed(2), z);
-            });
-
-            const setMapButton = document.getElementById('setMapSize');
-            setMapButton.addEventListener('click', () => {
-                const width = document.getElementById('mapWidth').value;
-                const height = document.getElementById('mapHeight').value;
-                setMapSize(width, height);
-            });
-
-            fetchWaypoints();
-        });
-    </script>
-</head>
-<body>
-    <h1>Автономный полет ESP</h1>
-    <div>
-
-    </div>
-    <div id="map"></div>
-<div id="sidebar">
-    <h3>Управление</h3>
-    <h4>Размер карты</h4>
-        <label>Ширина: <input type="number" id="mapWidth" value="3000" style="margin-right: 10px;"></label>
-        <label>Высота: <input type="number" id="mapHeight" value="3000" style="margin-right: 10px;"></label>
-        <button id="setMapSize">Применить</button>
-    <h4>Точки маршрута</h4>
-    <div id="waypoints"></div>
-    <h4>Данные каналов</h4>
-    <div id="channels"></div>
-    <h4>Данные дрона</h4>
-    <div id="drone_data"></div>
-</div>
-</body>
-</html>
-)rawliteral";
+void handleRoot(AsyncWebServerRequest *request) {
+    Serial.println("handleRoot вызван");
+    if (!SPIFFS.exists("/index.html")) {
+        Serial.println("index.html не найден в SPIFFS!");
+        request->send(404, "text/plain", "File Not Found");
+        return;
+    }
+    
+    request->send(SPIFFS, "/index.html");
+}
 
 uint64_t timer = 0;
-
 void setup() {
     Serial.begin(115200);
     Serial2.begin(115200, SERIAL_8N1, 2, 4);
     esp.begin(Serial2);
     // Подключение к Wi-Fi
     WiFi.softAP(ssid, password);
+
+    if (!SPIFFS.begin(true)) {
+      Serial.println("An Error has occurred while mounting SPIFFS");
+      return;
+    }
 
     IPAddress IP = WiFi.softAPIP();
     Serial.println("Точка доступа запущена:");
@@ -518,6 +260,7 @@ void setup() {
     Serial.println(IP);
 
     // Обработчики маршрутов
+    server.on("/", HTTP_GET, handleRoot);
     server.on("/add", HTTP_POST, handleAddWaypoint);
     server.on("/delete", HTTP_POST, handleDeleteWaypoint);
     server.on("/waypoints", HTTP_GET, handleGetWaypoints);
@@ -525,11 +268,6 @@ void setup() {
     server.on("/set_waypoint", HTTP_POST, handleSetWaypoint);
     server.on("/get_drone_position", HTTP_GET, handleGetDronePosition);
     server.on("/get_channels", HTTP_GET, handleGetChannels);
-
-    // Главная страница
-    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send_P(200, "text/html", index_html);
-    });
 
     server.begin();
 
@@ -542,10 +280,6 @@ void setup() {
     position.x = 1500;
     position.y = 1000;
 }
-//roll < 1500 - влево 
-//pitch < 1500 - назад
-
-
 
 // Заданные точки
 Point current_position = {0, 0}; // Начальная позиция дрона
@@ -596,12 +330,6 @@ void update_position(Point current_position, Vector3 target_position) {
   esp.pitch(pitch);
   esp.roll(roll);
   esp.throttle(throttle); // Поддержание скорости (примерная мощность)
-  // Serial.printf("%d %d\n", pitch, roll);
-  // Выводим информацию в Serial
-  // Serial.print("Current Position: X=");
-  // Serial.print(current_position.x);
-  // Serial.print(", Y=");
-  // Serial.println(current_position.y);
 }
 
 
