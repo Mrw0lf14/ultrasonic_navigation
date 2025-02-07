@@ -6,13 +6,22 @@
 #include "DxlMaster2.h"
 #include <SPIFFS.h>
 
-// #define EMULATE
+#define EMULATE
 
 const char* ssid = "ESP_AUTOPILOT";
 const char* password = "12345678";
 
 AsyncWebServer server(80);
 
+enum WorkStatus {
+  STATUS_WAIT_BASE = 0,
+  STATUS_MANUAL,
+  STATUS_AUTOPILOT,
+  STATUS_MISSION_END,
+};
+
+uint8_t status_id = 0;
+String status_msg [] = {"Ждем базу", "Ручной режим", "Автономный режим", "Миссия завершена"};
 // Хранение точек маршрута
 struct Waypoint {
     uint8_t id;
@@ -25,7 +34,6 @@ std::vector<Waypoint> waypoints;
 int waypointCounter = 0;
 float mapWidth = 100.0;
 float mapHeight = 100.0;
-
 
 struct Vector4 {
   float x;
@@ -41,7 +49,7 @@ struct Vector3 {
 };
 
 // Структура для представления точки
-struct Point {
+struct Vector2 {
   float x;
   float y;
 };
@@ -65,6 +73,7 @@ Vector3 position;
 uint32_t measure_count[4];
 uint32_t measure_time[4];
 Vector4 p[4];
+
 
 float vectorLength(Vector3 v) {
   return sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
@@ -117,7 +126,6 @@ Vector4 intersectionLength(Vector4 c1, Vector4 c2, uint8_t zflag = 0) {
   return tmp;
 }
 
-
 // Обработчик для добавления точки
 void handleAddWaypoint(AsyncWebServerRequest *request) {
     if (request->hasParam("x") && request->hasParam("y") && request->hasParam("z")) {
@@ -135,45 +143,14 @@ void handleAddWaypoint(AsyncWebServerRequest *request) {
 
 // Обработчик для удаления точки
 void handleDeleteWaypoint(AsyncWebServerRequest *request) {
-    if (request->hasParam("id", true)) {  // true - искать параметр в теле POST-запроса
-        int id = request->getParam("id", true)->value().toInt();
+    if (request->hasParam("id")) {  // true - искать параметр в теле POST-запроса
+        int id = request->getParam("id")->value().toInt();
+        Serial.printf("del %d\n", id);
         waypoints.erase(std::remove_if(waypoints.begin(), waypoints.end(), [id](const Waypoint& wp) {
             return wp.id == id;
         }), waypoints.end());
         request->send(200, "application/json", "{\"status\":\"success\"}");
         Serial.println("deleteWaypoint");
-    } else {
-        request->send(400, "application/json", "{\"status\":\"error\", \"message\":\"Missing parameters\"}");
-    }
-}
-
-// Обработчик для получения списка точек
-void handleGetWaypoints(AsyncWebServerRequest *request) {
-    DynamicJsonDocument doc(1024);
-
-    JsonArray arr = doc.to<JsonArray>();
-    for (const auto& wp : waypoints) {
-        JsonObject obj = arr.createNestedObject();
-        obj["id"] = wp.id;
-        obj["x"] = wp.x;
-        obj["y"] = wp.y;
-        obj["z"] = 1000 + wp.z*1000;
-        obj["checked"] = wp.checked;  // Добавляем статус
-    }
-
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response);
-}
-
-// Обработчик для изменения размера карты
-void handleSetMapSize(AsyncWebServerRequest *request) {
-    if (request->hasParam("width") && request->hasParam("height")) {
-        mapWidth = request->getParam("width")->value().toFloat();
-        mapHeight = request->getParam("height")->value().toFloat();
-        MAX_X = mapWidth;
-        MAX_Y = mapHeight;
-        request->send(200, "application/json", "{\"status\":\"success\"}");
     } else {
         request->send(400, "application/json", "{\"status\":\"error\", \"message\":\"Missing parameters\"}");
     }
@@ -201,6 +178,51 @@ void handleSetWaypoint(AsyncWebServerRequest *request) {
     } else {
         request->send(400, "application/json", "{\"status\":\"error\", \"message\":\"Missing parameters\"}");
     }
+}
+// Обработчик для получения списка точек
+void handleGetWaypoints(AsyncWebServerRequest *request) {
+    DynamicJsonDocument doc(1024);
+    // Serial.println("Get WP");
+    JsonArray arr = doc.to<JsonArray>();
+    for (const auto& wp : waypoints) {
+        JsonObject obj = arr.createNestedObject();
+        obj["x"] = wp.x;
+        obj["y"] = wp.y;
+        obj["z"] = 1000 + wp.z*1000;
+        obj["id"] = wp.id;
+        obj["checked"] = wp.checked;  // Добавляем статус
+    }
+
+    String response;
+    serializeJson(doc, response);
+    request->send(200, "application/json", response);
+}
+
+// Обработчик для изменения размера карты
+void handleSetMapSize(AsyncWebServerRequest *request) {
+    if (request->hasParam("width") && request->hasParam("height")) 
+    {
+      Serial.println("Set MapSize");
+      mapWidth = request->getParam("width")->value().toFloat();
+      mapHeight = request->getParam("height")->value().toFloat();
+      MAX_X = mapWidth;
+      MAX_Y = mapHeight;
+      request->send(200, "application/json", "{\"status\":\"success\"}");
+    } 
+    else 
+    {
+      request->send(400, "application/json", "{\"status\":\"error\", \"message\":\"Missing parameters\"}");
+    }
+}
+
+void handleGetMapSize(AsyncWebServerRequest *request) {
+    // Serial.println("Get MapSize");
+    DynamicJsonDocument doc(1024);
+    doc["width"] = MAX_X;
+    doc["height"] = MAX_Y;
+    String response;
+    serializeJson(doc, response);
+    request->send(200, "application/json", response);
 }
 
 // Обработчик для получения позиции дрона
@@ -237,6 +259,14 @@ void handleRoot(AsyncWebServerRequest *request) {
     request->send(SPIFFS, "/index.html");
 }
 
+void handleGetStatus(AsyncWebServerRequest *request) {
+    DynamicJsonDocument doc(1024);
+    doc["status"] = status_msg[status_id];
+    String response;
+    serializeJson(doc, response);
+    request->send(200, "application/json", response);
+}
+
 uint64_t timer = 0;
 void setup() {
     Serial.begin(115200);
@@ -261,14 +291,17 @@ void setup() {
 
     // Обработчики маршрутов
     server.on("/", HTTP_GET, handleRoot);
-    server.on("/add", HTTP_POST, handleAddWaypoint);
-    server.on("/delete", HTTP_POST, handleDeleteWaypoint);
+    server.on("/waypoint/add", HTTP_POST, handleAddWaypoint);
+    server.on("/waypoint/delete", HTTP_POST, handleDeleteWaypoint);
+    server.on("/waypoint/set", HTTP_POST, handleSetWaypoint);
     server.on("/waypoints", HTTP_GET, handleGetWaypoints);
-    server.on("/set_map_size", HTTP_POST, handleSetMapSize);
-    server.on("/set_waypoint", HTTP_POST, handleSetWaypoint);
-    server.on("/get_drone_position", HTTP_GET, handleGetDronePosition);
-    server.on("/get_channels", HTTP_GET, handleGetChannels);
 
+    server.on("/map/size", HTTP_POST, handleSetMapSize);
+    server.on("/map/size", HTTP_GET, handleGetMapSize);
+
+    server.on("/drone/position", HTTP_GET, handleGetDronePosition);
+    server.on("/channels", HTTP_GET, handleGetChannels);
+    server.on("/status", HTTP_GET, handleGetStatus);
     server.begin();
 
     delay(1000);  // Ждать стабилизации системы
@@ -282,8 +315,8 @@ void setup() {
 }
 
 // Заданные точки
-Point current_position = {0, 0}; // Начальная позиция дрона
-Point target_position = {5, 5}; // Целевая позиция
+Vector2 current_position = {0, 0}; // Начальная позиция дрона
+Vector2 target_position = {5, 5}; // Целевая позиция
 
 // Параметры управления
 uint16_t speed = 100;        // Скорость движения (м/с)
@@ -294,7 +327,7 @@ uint8_t msp_overwrite = 0;
 uint8_t alt_hold_on = 0;
 uint8_t autopilot_on = 0;
 // Функция для вычисления угла между двумя точками
-float calculate_angle(Point from, Point to) {
+float calculate_angle(Vector2 from, Vector2 to) {
   return atan2(to.y - from.y, to.x - from.x) * 180.0 / M_PI;
 }
 
@@ -313,7 +346,7 @@ void check_way_point(Vector3 drone_pos, Waypoint* wp)
 }
 
 // Функция для обновления положения дрона
-void update_position(Point current_position, Vector3 target_position) {
+void update_position(Vector2 current_position, Vector3 target_position) {
   angle = calculate_angle(current_position, {target_position.x, target_position.y});
   
   // Рассчитываем наклоны (roll и pitch) для движения к цели
@@ -353,6 +386,7 @@ void loop() {
 
       }
       else if (!waypoints.empty()) {
+        status_id = STATUS_AUTOPILOT;
         Waypoint* current_wp = &waypoints[counter_wp_checked];
         check_way_point(position, current_wp);
         update_position({position.x, position.y}, {waypoints[counter_wp_checked].x, waypoints[counter_wp_checked].y, waypoints[counter_wp_checked].z});
@@ -360,6 +394,7 @@ void loop() {
     #endif
     if (autopilot_on == 1)
     {
+      status_id = STATUS_AUTOPILOT;
       if (counter_wp_checked >= waypointCounter)
       {
         throttle = 0.2;
@@ -371,13 +406,13 @@ void loop() {
         delay(1000);
         throttle = 0;
         esp.throttle(throttle);
+        status_id = STATUS_MISSION_END;
         for(;;){}
       }
       else if (!waypoints.empty()) {
         Waypoint* current_wp = &waypoints[counter_wp_checked];
         check_way_point(position, current_wp);
         update_position({position.x, position.y}, {waypoints[counter_wp_checked].x, waypoints[counter_wp_checked].y});
-        // check_way_point(position, &(waypoints[counter_wp_checked]));
       }
     }
   }
@@ -390,6 +425,7 @@ void loop() {
     head[3] = DXL_SERIAL.read();
     if (strncmp(head, "DATA", 4) == 0)
     {
+      status_id = STATUS_MANUAL;
       String packet = DXL_SERIAL.readStringUntil('\n');
       int num1, num2, num3;
       sscanf(packet.c_str(), " %d %d %d", &num1, &num2, &num3);
@@ -415,6 +451,10 @@ void loop() {
         Serial.printf("pos = %f %f %f\n", position.x, position.y, position.z);
       }
     }
+  }
+  else
+  {
+    status_id = STATUS_WAIT_BASE;
   }
     
 }
