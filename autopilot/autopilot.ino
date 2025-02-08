@@ -5,8 +5,12 @@
 #include "ARA_ESP.h"
 #include "DxlMaster2.h"
 #include <SPIFFS.h>
+#include <deque>
 
-#define EMULATE
+const int FILTER_SIZE = 5; // Размер окна фильтра
+std::deque<float> x_history, y_history; // Очереди для хранения истории значений
+
+// #define EMULATE
 
 const char* ssid = "ESP_AUTOPILOT";
 const char* password = "12345678";
@@ -19,8 +23,16 @@ enum WorkStatus {
   STATUS_AUTOPILOT,
   STATUS_MISSION_END,
 };
-
 uint8_t status_id = 0;
+
+struct WorkState {
+  uint8_t state_base;
+  uint8_t state_channels;
+  uint8_t state_autopilot;
+  uint8_t state_wp_num;
+};
+WorkState states = {};
+
 String status_msg [] = {"Ждем базу", "Ручной режим", "Автономный режим", "Миссия завершена"};
 // Хранение точек маршрута
 struct Waypoint {
@@ -74,6 +86,19 @@ uint32_t measure_count[4];
 uint32_t measure_time[4];
 Vector4 p[4];
 
+// Функция обновления фильтра и получения сглаженного значения
+float updateFilter(std::deque<float>& history, float newValue) {
+    history.push_back(newValue);
+    if (history.size() > FILTER_SIZE) {
+        history.pop_front();
+    }
+
+    float sum = 0;
+    for (float val : history) {
+        sum += val;
+    }
+    return sum / history.size();
+}
 
 float vectorLength(Vector3 v) {
   return sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
@@ -225,16 +250,21 @@ void handleGetMapSize(AsyncWebServerRequest *request) {
     request->send(200, "application/json", response);
 }
 
-// Обработчик для получения позиции дрона
+// Обработчик для получения позиции дрона с фильтрацией
 void handleGetDronePosition(AsyncWebServerRequest *request) {
+    float fake_x = updateFilter(x_history, position.x);
+    float fake_y = updateFilter(y_history, position.y);
+
     DynamicJsonDocument doc(1024);
-    doc["x"] = position.x;
-    doc["y"] = position.y;
+    doc["x"] = fake_x;
+    doc["y"] = fake_y;
     doc["angle"] = angle; // расчет угла
+
     String response;
     serializeJson(doc, response);
     request->send(200, "application/json", response);
 }
+
 
 
 void handleGetChannels(AsyncWebServerRequest *request) {
@@ -319,13 +349,8 @@ Vector2 current_position = {0, 0}; // Начальная позиция дрон
 Vector2 target_position = {5, 5}; // Целевая позиция
 
 // Параметры управления
-uint16_t speed = 100;        // Скорость движения (м/с)
-float tolerance = 0.1;    // Допустимая погрешность в метрах
-float update_interval = 0.1; // Интервал обновления (с)
-uint8_t counter_wp_checked = 0;\
-uint8_t msp_overwrite = 0;
-uint8_t alt_hold_on = 0;
-uint8_t autopilot_on = 0;
+uint8_t counter_wp_checked = 0;
+
 // Функция для вычисления угла между двумя точками
 float calculate_angle(Vector2 from, Vector2 to) {
   return atan2(to.y - from.y, to.x - from.x) * 180.0 / M_PI;
@@ -335,13 +360,13 @@ void check_way_point(Vector3 drone_pos, Waypoint* wp)
 {
   uint16_t len_x = abs(drone_pos.x - wp->x);
   uint16_t len_y = abs(drone_pos.y - wp->y);
-  if (len_x < 100 && len_y < 100)
+  if (len_x < 150 && len_y < 150)
   {
     wp->checked = 1;
     counter_wp_checked++;
     esp.pitch(0);
     esp.roll(0);
-    delay(1000);
+    delay(300);
   } 
 }
 
@@ -353,13 +378,24 @@ void update_position(Vector2 current_position, Vector3 target_position) {
   pitch = sin(angle * M_PI / 180.0)*0.3;
   roll = cos(angle * M_PI / 180.0)*0.3;
   throttle = target_position.z;
-
-  #ifdef EMULATE
-    position.x += 50*roll;
-    position.y += 50*pitch; 
-  #endif
-
+  //проверка на границу с отступом
+  float padding = 400;
+  Serial.printf("x %.1f y %.1f\n\r", position.x, position.y);
+  if ((position.x < padding) || (position.x > MAX_X - padding))
+  {
+    roll = -roll;
+    Serial.println("fall in x");
+  } 
+  if ((position.y < padding) || (position.y > MAX_Y - padding))
+  {
+    pitch = -pitch;
+    Serial.println("fall in y");
+  }
   // Управляем дроном
+#ifdef EMULATE
+    position.x += 100*roll;
+    position.y += 100*pitch; 
+#endif
   esp.pitch(pitch);
   esp.roll(roll);
   esp.throttle(throttle); // Поддержание скорости (примерная мощность)
@@ -369,50 +405,83 @@ void update_position(Vector2 current_position, Vector3 target_position) {
 uint8_t msp_failed_counter = 0;
 void loop() {
   uint64_t diff_timer = millis() - timer;
-  if (diff_timer > 200)
+  if (diff_timer > 100)
   {
+    if (states.state_base == 0)
+    {
+      status_id = STATUS_WAIT_BASE;
+    }
+    else if (states.state_channels == 0)
+    {
+      status_id = STATUS_MANUAL;
+    }
+    if (states.state_autopilot == 1)
+    {
+      status_id = STATUS_AUTOPILOT;
+    }
+    if (states.state_autopilot == 2)
+    {
+      status_id = STATUS_MISSION_END;
+    }
     timer = millis();
     uint16_t aux1 = esp.get_channel(6); //alt hold
     uint16_t aux2 = esp.get_channel(8); //msp overwrite
-
+#ifndef EMULATE
+    if (aux1 == 0 && aux2 == 0)
+    {
+      msp_failed_counter++;
+    }
+    else 
+    {
+      msp_failed_counter = 0;
+    }
+    if (msp_failed_counter > 10)
+    {
+      ESP.restart(); 
+    }
+#endif
     // Serial.printf("ch6 = %d, ch8 = %d\n", aux1, aux2);
-    alt_hold_on = aux1 >=  1500 ? 1 : 0;
-    msp_overwrite = aux2 > 1500 ? 1 : 0;
+    uint8_t alt_hold_on = aux1 >=  1500 ? 1 : 0;
+    uint8_t msp_overwrite = aux2 > 1500 ? 1 : 0;
     
-    autopilot_on = alt_hold_on && msp_overwrite;
-    #ifdef EMULATE
+    states.state_channels = alt_hold_on && msp_overwrite;
+    if (states.state_channels == 0 || states.state_base == 0)
+    {
+      states.state_autopilot = 0;
+    }
+#ifdef EMULATE
       if (counter_wp_checked >= waypointCounter)
       {
-
+        states.state_autopilot = 2;
       }
-      else if (!waypoints.empty()) {
-        status_id = STATUS_AUTOPILOT;
+      else if (!waypoints.empty() && states.state_autopilot != 2) {
         Waypoint* current_wp = &waypoints[counter_wp_checked];
         check_way_point(position, current_wp);
         update_position({position.x, position.y}, {waypoints[counter_wp_checked].x, waypoints[counter_wp_checked].y, waypoints[counter_wp_checked].z});
+        states.state_autopilot = 1;
       }
-    #endif
-    if (autopilot_on == 1)
+#endif
+    if (states.state_channels == 1 && states.state_base == 1)
     {
-      status_id = STATUS_AUTOPILOT;
       if (counter_wp_checked >= waypointCounter)
       {
+        states.state_autopilot = 2;
         throttle = 0.2;
         roll = 0;
         pitch = 0;
         esp.throttle(throttle);
         esp.roll(roll);
         esp.pitch(pitch);
-        delay(1000);
+        delay(300);
         throttle = 0;
         esp.throttle(throttle);
-        status_id = STATUS_MISSION_END;
         for(;;){}
       }
-      else if (!waypoints.empty()) {
+      else if (!waypoints.empty() && states.state_autopilot != 2) {
+        states.state_autopilot = 1;
         Waypoint* current_wp = &waypoints[counter_wp_checked];
         check_way_point(position, current_wp);
-        update_position({position.x, position.y}, {waypoints[counter_wp_checked].x, waypoints[counter_wp_checked].y});
+        update_position({position.x, position.y}, {waypoints[counter_wp_checked].x, waypoints[counter_wp_checked].y, waypoints[counter_wp_checked].z});
       }
     }
   }
@@ -425,12 +494,13 @@ void loop() {
     head[3] = DXL_SERIAL.read();
     if (strncmp(head, "DATA", 4) == 0)
     {
-      status_id = STATUS_MANUAL;
       String packet = DXL_SERIAL.readStringUntil('\n');
       int num1, num2, num3;
       sscanf(packet.c_str(), " %d %d %d", &num1, &num2, &num3);
+      // Serial.printf("%d %d %d\n\r", num1, num2, num3);
       if (num1 < 4)
-      {     
+      {
+        states.state_base = 1;     
         p[num1].r = num2*ka + kb;
 
         Vector4 r[4];
@@ -448,13 +518,8 @@ void loop() {
         position.x = constrain(position.x, 0, MAX_X);
         position.y = constrain(position.y, 0, MAX_Y);
         position.z = constrain(position.z, 0, MAX_Z);
-        Serial.printf("pos = %f %f %f\n", position.x, position.y, position.z);
+        // Serial.printf("pos = %f %f %f\n", position.x, position.y, position.z);
       }
     }
   }
-  else
-  {
-    status_id = STATUS_WAIT_BASE;
-  }
-    
 }
