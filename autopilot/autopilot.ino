@@ -10,7 +10,7 @@
 const int FILTER_SIZE = 5; // Размер окна фильтра
 std::deque<float> x_history, y_history; // Очереди для хранения истории значений
 
-// #define EMULATE
+#define EMULATE
 
 const char* ssid = "ESP_AUTOPILOT";
 const char* password = "12345678";
@@ -66,6 +66,9 @@ struct Vector2 {
   float y;
 };
 
+// Параметры управления
+uint8_t counter_wp_checked = 0;
+
 uint16_t MAX_X = 2500;
 uint16_t MAX_Y = 3000;
 #define MAX_Z 2400
@@ -82,8 +85,6 @@ static uint8_t count = 0;
 static uint8_t dlay = 0;
 
 Vector3 position;
-uint32_t measure_count[4];
-uint32_t measure_time[4];
 Vector4 p[4];
 
 // Функция обновления фильтра и получения сглаженного значения
@@ -158,7 +159,16 @@ void handleAddWaypoint(AsyncWebServerRequest *request) {
         float y = request->getParam("y")->value().toFloat();
         float z = (float)(request->getParam("z")->value().toInt() - 1000) / 1000;
         Serial.printf("add z %f %d\n", z, request->getParam("z")->value().toInt());
-        waypoints.push_back({ waypointCounter++, x, y, z});
+
+        waypointCounter++;
+
+        // Найти максимальный id
+        int new_id = 1; // Если список пуст
+        if (!waypoints.empty()) {
+            new_id = (*std::max_element(waypoints.begin(), waypoints.end(), 
+                [](const Waypoint& a, const Waypoint& b) { return a.id < b.id; })).id + 1;
+        }
+        waypoints.push_back({new_id , x, y, z});
 
         request->send(200, "application/json", "{\"status\":\"success\"}");
     } else {
@@ -168,18 +178,43 @@ void handleAddWaypoint(AsyncWebServerRequest *request) {
 
 // Обработчик для удаления точки
 void handleDeleteWaypoint(AsyncWebServerRequest *request) {
-    if (request->hasParam("id")) {  // true - искать параметр в теле POST-запроса
+    if (request->hasParam("id")) {  
         int id = request->getParam("id")->value().toInt();
         Serial.printf("del %d\n", id);
+
+        waypointCounter--;
+        if (id-1 < counter_wp_checked)
+        {
+          counter_wp_checked--;
+        }
+        // Удаление указанного waypoint
         waypoints.erase(std::remove_if(waypoints.begin(), waypoints.end(), [id](const Waypoint& wp) {
             return wp.id == id;
         }), waypoints.end());
-        request->send(200, "application/json", "{\"status\":\"success\"}");
-        Serial.println("deleteWaypoint");
+
+        // Формирование списка оставшихся id
+        String remainingIds = "[";
+        for (size_t i = 0; i < waypoints.size(); i++) {
+            remainingIds += String(waypoints[i].id);
+            if (i < waypoints.size() - 1) {
+                remainingIds += ",";
+            }
+            waypoints[i].id = i+1;
+        }
+        remainingIds += "]";
+
+        // Ответ клиенту
+        String response = "{\"status\":\"success\", \"remaining_ids\":" + remainingIds + "}";
+        request->send(200, "application/json", response);
+
+        // Вывод оставшихся точек в Serial
+        Serial.print("Remaining waypoint IDs: ");
+        Serial.println(remainingIds);
     } else {
         request->send(400, "application/json", "{\"status\":\"error\", \"message\":\"Missing parameters\"}");
     }
 }
+
 
 void handleSetWaypoint(AsyncWebServerRequest *request) {
     if (request->hasParam("id") && request->hasParam("x") && request->hasParam("y") && request->hasParam("z")) {
@@ -344,13 +379,6 @@ void setup() {
     position.y = 1000;
 }
 
-// Заданные точки
-Vector2 current_position = {0, 0}; // Начальная позиция дрона
-Vector2 target_position = {5, 5}; // Целевая позиция
-
-// Параметры управления
-uint8_t counter_wp_checked = 0;
-
 // Функция для вычисления угла между двумя точками
 float calculate_angle(Vector2 from, Vector2 to) {
   return atan2(to.y - from.y, to.x - from.x) * 180.0 / M_PI;
@@ -380,16 +408,13 @@ void update_position(Vector2 current_position, Vector3 target_position) {
   throttle = target_position.z;
   //проверка на границу с отступом
   float padding = 400;
-  Serial.printf("x %.1f y %.1f\n\r", position.x, position.y);
   if ((position.x < padding) || (position.x > MAX_X - padding))
   {
     roll = -roll;
-    Serial.println("fall in x");
   } 
   if ((position.y < padding) || (position.y > MAX_Y - padding))
   {
     pitch = -pitch;
-    Serial.println("fall in y");
   }
   // Управляем дроном
 #ifdef EMULATE
