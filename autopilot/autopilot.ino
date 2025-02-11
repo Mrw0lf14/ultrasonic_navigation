@@ -87,6 +87,11 @@ static uint8_t dlay = 0;
 Vector3 position;
 Vector4 p[4];
 
+float angle;
+float pitch;
+float roll;
+float throttle;
+
 // Функция обновления фильтра и получения сглаженного значения
 float updateFilter(std::deque<float>& history, float newValue) {
     history.push_back(newValue);
@@ -104,11 +109,6 @@ float updateFilter(std::deque<float>& history, float newValue) {
 float vectorLength(Vector3 v) {
   return sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
 }
-
-float angle;
-float pitch;
-float roll;
-float throttle;
 
 Vector4 intersectionLength(Vector4 c1, Vector4 c2, uint8_t zflag = 0) {
   Vector3 distance = {c2.x - c1.x, c2.y - c1.y, c2.z - c1.z};
@@ -332,7 +332,6 @@ void handleGetStatus(AsyncWebServerRequest *request) {
     request->send(200, "application/json", response);
 }
 
-uint64_t timer = 0;
 void setup() {
     Serial.begin(115200);
     Serial2.begin(115200, SERIAL_8N1, 2, 4);
@@ -426,12 +425,15 @@ void update_position(Vector2 current_position, Vector3 target_position) {
   esp.throttle(throttle); // Поддержание скорости (примерная мощность)
 }
 
-
+uint64_t timer = 0;
 uint8_t msp_failed_counter = 0;
 void loop() {
   uint64_t diff_timer = millis() - timer;
   if (diff_timer > 100)
   {
+    int32_t opt_flow_vx, opt_flow_vy, opt_flow_vz, opt_flow_not_used;
+    esp.get_optical_flow(opt_flow_vx, opt_flow_vy, opt_flow_vz, opt_flow_not_used);
+    Serial.printf("opt_flow %d %d %d\n\r", opt_flow_vx, opt_flow_vy, opt_flow_vz);
     if (states.state_base == 0)
     {
       status_id = STATUS_WAIT_BASE;
@@ -523,6 +525,9 @@ void loop() {
       int num1, num2, num3;
       sscanf(packet.c_str(), " %d %d %d", &num1, &num2, &num3);
       // Serial.printf("%d %d %d\n\r", num1, num2, num3);
+      // int32_t opt_flow_vx, opt_flow_vy, opt_flow_vz, opt_flow_not_used;
+      // esp.get_optical_flow(opt_flow_vx, opt_flow_vy, opt_flow_vz, opt_flow_not_used);
+      // Serial.printf("opt_flow %d %d %d\n\r", opt_flow_vx, opt_flow_vy, opt_flow_vz);
       if (num1 < 4)
       {
         states.state_base = 1;     

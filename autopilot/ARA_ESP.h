@@ -29,6 +29,7 @@ class ARA_ESP
   void gps_altitude(uint16_t alt);
   void gps_local_position(float pos_x, float pos_y, int16_t pos_z);
   void gps_set_lpos_orientation(float angle);                         //в градусах
+  void get_optical_flow(int32_t &delta_x, int32_t &delta_y, int32_t &delta_z, int32_t &flow_not_used);
   
   bool flag_data;
   private:
