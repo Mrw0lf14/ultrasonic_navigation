@@ -10,7 +10,7 @@
 const int FILTER_SIZE = 5; // Размер окна фильтра
 std::deque<float> x_history, y_history; // Очереди для хранения истории значений
 
-#define EMULATE
+// #define EMULATE
 
 const char* ssid = "ESP_AUTOPILOT";
 const char* password = "12345678";
@@ -394,7 +394,7 @@ void check_way_point(Vector3 drone_pos, Waypoint* wp)
     counter_wp_checked++;
     esp.pitch(0);
     esp.roll(0);
-    delay(300);
+    delay(1000);
   } 
 }
 
@@ -502,7 +502,7 @@ void loop() {
         delay(300);
         throttle = 0;
         esp.throttle(throttle);
-        // for(;;){}
+        for(;;){}
       }
       else if (!waypoints.empty() && states.state_autopilot != 2) {
         states.state_autopilot = 1;
