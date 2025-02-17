@@ -293,7 +293,7 @@ void handleGetDronePosition(AsyncWebServerRequest *request) {
     DynamicJsonDocument doc(1024);
     doc["x"] = fake_x;
     doc["y"] = fake_y;
-    doc["angle"] = angle; // расчет угла
+    doc["angle"] = -angle - M_PI/2; // расчет угла
 
     String response;
     serializeJson(doc, response);
@@ -381,7 +381,7 @@ void setup() {
 
 // Функция для вычисления угла между двумя точками
 float calculate_angle(Vector2 from, Vector2 to) {
-  return atan2(to.y - from.y, to.x - from.x) * 180.0 / M_PI;
+  return atan2(to.y - from.y, to.x - from.x);
 }
 
 void check_way_point(Vector3 drone_pos, Waypoint* wp)
@@ -403,8 +403,8 @@ void update_position(Vector2 current_position, Vector3 target_position) {
   angle = calculate_angle(current_position, {target_position.x, target_position.y});
   
   // Рассчитываем наклоны (roll и pitch) для движения к цели
-  pitch = sin(angle * M_PI / 180.0)*0.3;
-  roll = cos(angle * M_PI / 180.0)*0.3;
+  pitch = sin(angle)*0.3;
+  roll = cos(angle)*0.3;
   throttle = target_position.z;
   //проверка на границу с отступом
   float padding = 400;
@@ -449,8 +449,10 @@ void loop() {
       status_id = STATUS_MISSION_END;
     }
     timer = millis();
+    noInterrupts();
     uint16_t aux1 = esp.get_channel(6); //alt hold
     uint16_t aux2 = esp.get_channel(8); //msp overwrite
+    interrupts();
 #ifndef EMULATE
     if (aux1 == 0 && aux2 == 0)
     {
@@ -462,10 +464,10 @@ void loop() {
     }
     if (msp_failed_counter > 10)
     {
-      ESP.restart(); 
+      // ESP.restart(); 
     }
 #endif
-    // Serial.printf("ch6 = %d, ch8 = %d\n", aux1, aux2);
+    Serial.printf("ch6 = %d, ch8 = %d\n", aux1, aux2);
     uint8_t alt_hold_on = aux1 >=  1500 ? 1 : 0;
     uint8_t msp_overwrite = aux2 > 1500 ? 1 : 0;
     
@@ -500,7 +502,7 @@ void loop() {
         delay(300);
         throttle = 0;
         esp.throttle(throttle);
-        for(;;){}
+        // for(;;){}
       }
       else if (!waypoints.empty() && states.state_autopilot != 2) {
         states.state_autopilot = 1;
@@ -522,7 +524,7 @@ void loop() {
       String packet = DXL_SERIAL.readStringUntil('\n');
       int num1, num2, num3;
       sscanf(packet.c_str(), " %d %d %d", &num1, &num2, &num3);
-      // Serial.printf("%d %d %d\n\r", num1, num2, num3);
+      Serial.printf("%d %d %d\n\r", num1, num2, num3);
       if (num1 < 4)
       {
         states.state_base = 1;     
