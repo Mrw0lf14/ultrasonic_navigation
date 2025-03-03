@@ -12,7 +12,7 @@
 const int FILTER_SIZE = 5; // Размер окна фильтра
 std::deque<float> x_history, y_history; // Очереди для хранения истории значений
 
-#define EMULATE
+// #define EMULATE
 
 char ssid[32];
 const char* password = "12345678";
@@ -35,7 +35,7 @@ struct WorkState {
 };
 WorkState states = {};
 
-String status_msg [] = {"Ждем базу", "Ручной режим", "Автономный режим", "Миссия завершена"};
+String status_msg [] = {"Ожидание базовой станции", "Ручной режим", "Автономный режим", "Миссия завершена"};
 // Хранение точек маршрута
 struct Waypoint {
     uint8_t id;
