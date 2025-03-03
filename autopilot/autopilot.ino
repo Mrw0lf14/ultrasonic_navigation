@@ -12,7 +12,7 @@
 const int FILTER_SIZE = 5; // Размер окна фильтра
 std::deque<float> x_history, y_history; // Очереди для хранения истории значений
 
-#define EMULATE
+// #define EMULATE
 #define PRODUCTION_VERSION true        //true to make prod, false to debug
 
 char ssid[32];
