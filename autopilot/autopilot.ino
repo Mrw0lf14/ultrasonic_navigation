@@ -12,12 +12,15 @@
 const int FILTER_SIZE = 5; // Размер окна фильтра
 std::deque<float> x_history, y_history; // Очереди для хранения истории значений
 
-// #define EMULATE
+#define EMULATE
+#define PRODUCTION_VERSION true        //true to make prod, false to debug
 
 char ssid[32];
 const char* password = "12345678";
 
 AsyncWebServer server(80);
+
+#define WALL_OFFSET 300
 
 enum WorkStatus {
   STATUS_WAIT_BASE = 0,
@@ -302,8 +305,6 @@ void handleGetDronePosition(AsyncWebServerRequest *request) {
     request->send(200, "application/json", response);
 }
 
-
-
 void handleGetChannels(AsyncWebServerRequest *request) {
     DynamicJsonDocument doc(1024);
     doc["Roll"] = esp.ROLL;   // Пример
@@ -334,19 +335,13 @@ void handleGetStatus(AsyncWebServerRequest *request) {
     request->send(200, "application/json", response);
 }
 
-// char* readMacAddress()
-// {
-//   uint8_t baseMac[6];
-//   esp_err_t ret = esp_wifi_get_mac(WIFI_IF_STA, baseMac);
-//   if (ret == ESP_OK) {
-//     Serial.printf("%02x:%02x:%02x:%02x:%02x:%02x\n",
-//                   baseMac[0], baseMac[1], baseMac[2],
-//                   baseMac[3], baseMac[4], baseMac[5]);
-//   } else {
-//     Serial.println("Failed to read MAC address");
-//   }
-//   return (char*) baseMac;
-// }
+void handleGetProduction(AsyncWebServerRequest *request) {
+    DynamicJsonDocument doc(1024);
+    doc["production"] = PRODUCTION_VERSION;
+    String response;
+    serializeJson(doc, response);
+    request->send(200, "application/json", response);
+}
 
 void getUniqName(uint8_t len)
 {
@@ -391,6 +386,7 @@ void setup() {
     server.on("/drone/position", HTTP_GET, handleGetDronePosition);
     server.on("/channels", HTTP_GET, handleGetChannels);
     server.on("/status", HTTP_GET, handleGetStatus);
+    server.on("/production", HTTP_GET, handleGetProduction);
     server.begin();
 
     delay(1000);  // Ждать стабилизации системы
@@ -431,12 +427,11 @@ void update_position(Vector2 current_position, Vector3 target_position) {
   roll = cos(angle)*0.3;
   throttle = target_position.z;
   //проверка на границу с отступом
-  float padding = 400;
-  if ((position.x < padding) || (position.x > MAX_X - padding))
+  if ((position.x < WALL_OFFSET) || (position.x > MAX_X - WALL_OFFSET))
   {
     roll = -roll;
   } 
-  if ((position.y < padding) || (position.y > MAX_Y - padding))
+  if ((position.y < WALL_OFFSET) || (position.y > MAX_Y - WALL_OFFSET))
   {
     pitch = -pitch;
   }
