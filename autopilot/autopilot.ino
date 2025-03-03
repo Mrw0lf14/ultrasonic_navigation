@@ -6,13 +6,15 @@
 #include "DxlMaster2.h"
 #include <SPIFFS.h>
 #include <deque>
+#include <esp_wifi.h>
+#include <string.h>
 
 const int FILTER_SIZE = 5; // Размер окна фильтра
 std::deque<float> x_history, y_history; // Очереди для хранения истории значений
 
-// #define EMULATE
+#define EMULATE
 
-const char* ssid = "ESP_AUTOPILOT";
+char ssid[32];
 const char* password = "12345678";
 
 AsyncWebServer server(80);
@@ -332,12 +334,34 @@ void handleGetStatus(AsyncWebServerRequest *request) {
     request->send(200, "application/json", response);
 }
 
+// char* readMacAddress()
+// {
+//   uint8_t baseMac[6];
+//   esp_err_t ret = esp_wifi_get_mac(WIFI_IF_STA, baseMac);
+//   if (ret == ESP_OK) {
+//     Serial.printf("%02x:%02x:%02x:%02x:%02x:%02x\n",
+//                   baseMac[0], baseMac[1], baseMac[2],
+//                   baseMac[3], baseMac[4], baseMac[5]);
+//   } else {
+//     Serial.println("Failed to read MAC address");
+//   }
+//   return (char*) baseMac;
+// }
+
+void getUniqName(uint8_t len)
+{
+  uint64_t chip_id = ESP.getEfuseMac();   /* Чтение ID микроконтроллера */
+  uint32_t mask = (1 << (len * 4)) - 1;
+  chip_id >>= 24;   /* Формировние постфикса для имени сети из ID микроконтроллера */
+  snprintf(ssid, sizeof(ssid), "ESP-US-NAV-%0*X", len,  (uint32_t)(chip_id & mask));
+}
+
 uint64_t timer = 0;
 void setup() {
     Serial.begin(115200);
     Serial2.begin(115200, SERIAL_8N1, 2, 4);
     esp.begin(Serial2);
-    // Подключение к Wi-Fi
+    getUniqName(6);
     WiFi.softAP(ssid, password);
 
     if (!SPIFFS.begin(true)) {
@@ -388,7 +412,7 @@ void check_way_point(Vector3 drone_pos, Waypoint* wp)
 {
   uint16_t len_x = abs(drone_pos.x - wp->x);
   uint16_t len_y = abs(drone_pos.y - wp->y);
-  if (len_x < 150 && len_y < 150)
+  if (len_x < 80 && len_y < 80)
   {
     wp->checked = 1;
     counter_wp_checked++;
