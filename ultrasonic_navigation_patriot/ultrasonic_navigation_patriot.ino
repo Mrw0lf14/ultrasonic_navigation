@@ -356,52 +356,39 @@ void getUniqName(uint8_t len)
   snprintf(ssid, sizeof(ssid), "ESP-US-NAV-%0*X", len,  (uint32_t)(chip_id & mask));
 }
 
-uint64_t timer = 0;
 void setup() {
-    Serial.begin(115200);
-    // Serial2.begin(115200, SERIAL_8N1, 2, 4);
-    esp.begin(Serial2);
-    getUniqName(6);
-    WiFi.softAP(ssid, password);
+  //setup gps msp
+  Serial.begin(115200);
+  Serial2.begin(115200, SERIAL_8N1, 2, 4);
+  esp.begin(Serial);
 
-    if (!SPIFFS.begin(true)) {
-      Serial.println("An Error has occurred while mounting SPIFFS");
-      return;
-    }
+  getUniqName(6);
+  WiFi.softAP(ssid, password);
+  if (!SPIFFS.begin(true)) {
+    Serial.println("An Error has occurred while mounting SPIFFS");
+    return;
+  }
+  IPAddress IP = WiFi.softAPIP();
 
-    IPAddress IP = WiFi.softAPIP();
-    Serial.println("Точка доступа запущена:");
-    Serial.print("SSID: ");
-    Serial.println(ssid);
-    Serial.print("Password: ");
-    Serial.println(password);
-    Serial.print("IP Address: ");
-    Serial.println(IP);
+  server.on("/", HTTP_GET, handleRoot);
+  server.on("/waypoint/add", HTTP_POST, handleAddWaypoint);
+  server.on("/waypoint/delete", HTTP_POST, handleDeleteWaypoint);
+  server.on("/waypoint/set", HTTP_POST, handleSetWaypoint);
+  server.on("/waypoints", HTTP_GET, handleGetWaypoints);
+  server.on("/map/size", HTTP_POST, handleSetMapSize);
+  server.on("/map/size", HTTP_GET, handleGetMapSize);
+  server.on("/drone/position", HTTP_GET, handleGetDronePosition);
+  server.on("/channels", HTTP_GET, handleGetChannels);
+  server.on("/status", HTTP_GET, handleGetStatus);
+  server.on("/production", HTTP_GET, handleGetProduction);
+  server.begin();
 
-    // Обработчики маршрутов
-    server.on("/", HTTP_GET, handleRoot);
-    server.on("/waypoint/add", HTTP_POST, handleAddWaypoint);
-    server.on("/waypoint/delete", HTTP_POST, handleDeleteWaypoint);
-    server.on("/waypoint/set", HTTP_POST, handleSetWaypoint);
-    server.on("/waypoints", HTTP_GET, handleGetWaypoints);
-
-    server.on("/map/size", HTTP_POST, handleSetMapSize);
-    server.on("/map/size", HTTP_GET, handleGetMapSize);
-
-    server.on("/drone/position", HTTP_GET, handleGetDronePosition);
-    server.on("/channels", HTTP_GET, handleGetChannels);
-    server.on("/status", HTTP_GET, handleGetStatus);
-    server.on("/production", HTTP_GET, handleGetProduction);
-    server.begin();
-
-    delay(1000);  // Ждать стабилизации системы
-
-    p[0] = {0    , 0    , MAX_Z, 3000}; // Положение передатчиков по углам
-    p[1] = {MAX_X, 0    , MAX_Z, 3000};
-    p[2] = {0    , MAX_Y, MAX_Z, 3000};
-    p[3] = {MAX_X, MAX_Y, MAX_Z, 3000};
-    position.x = 1500;
-    position.y = 1000;
+  p[0] = {0    , 0    , MAX_Z, 3000}; // Положение передатчиков по углам
+  p[1] = {MAX_X, 0    , MAX_Z, 3000};
+  p[2] = {0    , MAX_Y, MAX_Z, 3000};
+  p[3] = {MAX_X, MAX_Y, MAX_Z, 3000};
+  position.x = 1500;
+  position.y = 1000;
 }
 
 // Функция для вычисления угла между двумя точками
@@ -449,12 +436,11 @@ void update_position(Vector2 current_position, Vector3 target_position) {
   esp.roll(roll);
   esp.throttle(throttle); // Поддержание скорости (примерная мощность)
 }
-
-
+uint64_t timer = 0;
 uint8_t msp_failed_counter = 0;
 void loop() {
   uint64_t diff_timer = millis() - timer;
-  if (diff_timer > 100)
+  if (diff_timer > 50)
   {
     if (states.state_base == 0)
     {
@@ -474,8 +460,42 @@ void loop() {
     }
     timer = millis();
     noInterrupts();
+    uint16_t test = esp.get_channel(5);
     uint16_t aux1 = esp.get_channel(6); //alt hold
     uint16_t aux2 = esp.get_channel(8); //msp overwrite
+    int sns_num_value;
+    int distance_value;
+    int rx_count_value;
+
+    // Вызов функции с передачей адресов переменных
+    esp.get_gps_coords(&sns_num_value, &distance_value, &rx_count_value);
+
+    // Теперь переменные содержат значения, записанные в функции
+    // Serial.printf("sns_num: %d, distance: %d, rx_count: %d\n", 
+    //               sns_num_value, distance_value, rx_count_value);
+    
+    if (sns_num_value < 4)
+    {
+      states.state_base = 1;     
+      p[sns_num_value].r = distance_value*ka + kb;
+
+      Vector4 r[4];
+      r[0] = intersectionLength(p[0], p[1], 0);
+      r[1] = intersectionLength(p[0], p[2], 0);
+      r[2] = intersectionLength(p[2], p[3], 0);
+      r[3] = intersectionLength(p[1], p[3], 0);
+
+      position.x = (r[0].x + r[2].x)/2;
+      position.y = (r[1].y + r[3].y)/2;
+      Vector4 rcr[2];
+      rcr[0] = intersectionLength(r[0], r[2], 1);
+      rcr[1] = intersectionLength(r[1], r[3], 1);
+      position.z = (rcr[0].z + rcr[1].z)/2;
+      position.x = constrain(position.x, 0, MAX_X);
+      position.y = constrain(position.y, 0, MAX_Y);
+      position.z = constrain(position.z, 0, MAX_Z);
+    }
+    position.x = test;
     interrupts();
 #ifndef EMULATE
     if (aux1 == 0 && aux2 == 0)
@@ -536,41 +556,5 @@ void loop() {
       }
     }
   }
-  if (DXL_SERIAL.available())
-  {
-    char head[4];
-    head[0] = DXL_SERIAL.read();
-    head[1] = DXL_SERIAL.read();
-    head[2] = DXL_SERIAL.read();
-    head[3] = DXL_SERIAL.read();
-    if (strncmp(head, "DATA", 4) == 0)
-    {
-      String packet = DXL_SERIAL.readStringUntil('\n');
-      int num1, num2, num3;
-      sscanf(packet.c_str(), " %d %d %d", &num1, &num2, &num3);
-      // Serial.printf("%d %d %d\n\r", num1, num2, num3);
-      if (num1 < 4)
-      {
-        states.state_base = 1;     
-        p[num1].r = num2*ka + kb;
-
-        Vector4 r[4];
-        r[0] = intersectionLength(p[0], p[1], 0);
-        r[1] = intersectionLength(p[0], p[2], 0);
-        r[2] = intersectionLength(p[2], p[3], 0);
-        r[3] = intersectionLength(p[1], p[3], 0);
-
-        position.x = (r[0].x + r[2].x)/2;
-        position.y = (r[1].y + r[3].y)/2;
-        Vector4 rcr[2];
-        rcr[0] = intersectionLength(r[0], r[2], 1);
-        rcr[1] = intersectionLength(r[1], r[3], 1);
-        position.z = (rcr[0].z + rcr[1].z)/2;
-        position.x = constrain(position.x, 0, MAX_X);
-        position.y = constrain(position.y, 0, MAX_Y);
-        position.z = constrain(position.z, 0, MAX_Z);
-        // Serial.printf("pos = %f %f %f\n", position.x, position.y, position.z);
-      }
-    }
-  }
 }
+

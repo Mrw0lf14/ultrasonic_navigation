@@ -82,6 +82,11 @@ const unsigned char logo_bmp [] PROGMEM = {
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 };
 
+uint8_t counter = 0;
+char buf[20] = {0};
+uint32_t time_update = 0;
+uint8_t in_bootloader = 1;
+
 void setup(void)
 {
   pinMode(2, OUTPUT);
@@ -106,10 +111,8 @@ void setup(void)
   // display.setCursor(0,48);        
   // display.println("time test");
   display.display();
+  time_update = millis();
 }
-
-uint8_t counter = 0;
-char buf[20] = {0};
 
 void loop(void)
 {
@@ -163,6 +166,19 @@ void loop(void)
 
   if (Serial.available())
   {
+    // time_update = millis();
     Serial1.write(Serial.read());
   }
+  // if (millis() - time_update > 5000)
+  // {
+  //   if (in_bootloader == 1)
+  //   {
+  //     Serial1.end();
+  //     Serial1.begin(115200, SERIAL_8N1, 22, 23);
+  //     Serial.end();
+  //     Serial.begin(115200);
+  //     Serial.println("Exit from bootloader");
+  //     in_bootloader = 0;
+  //   }
+  // }
 }
